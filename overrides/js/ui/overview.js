@@ -9,7 +9,7 @@ import * as Signals from '../misc/signals.js';
 
 // Time for initial animation going into Overview mode;
 // this is defined here to make it available in imports.
-export const ANIMATION_TIME = 250;
+export const ANIMATION_TIME = 200;
 
 import * as DND from './dnd.js';
 import * as Dash from './dash.js';
@@ -327,33 +327,13 @@ export class Overview extends Signals.EventEmitter {
 
         this._trackedPersistentDashWindows.add(metaWindow);
 
+        const handler = () => this._updatePersistentDashVisibility();
         metaWindow.connectObject(
-            'position-changed',
-            () => this._updatePersistentDashVisibility(),
-            this._persistentDashContainer);
-        metaWindow.connectObject(
-            'size-changed',
-            () => this._updatePersistentDashVisibility(),
-            this._persistentDashContainer);
-        metaWindow.connectObject(
-            'workspace-changed',
-            () => this._updatePersistentDashVisibility(),
-            this._persistentDashContainer);
-        metaWindow.connectObject(
-            'notify::minimized',
-            () => this._updatePersistentDashVisibility(),
-            this._persistentDashContainer);
-        metaWindow.connectObject(
-            'notify::maximized-horizontally',
-            () => this._updatePersistentDashVisibility(),
-            this._persistentDashContainer);
-        metaWindow.connectObject(
-            'notify::maximized-vertically',
-            () => this._updatePersistentDashVisibility(),
-            this._persistentDashContainer);
-        metaWindow.connectObject(
-            'unmanaged',
-            () => this._trackedPersistentDashWindows.delete(metaWindow),
+            'position-changed', handler,
+            'size-changed', handler,
+            'workspace-changed', handler,
+            'notify::minimized', handler,
+            'unmanaged', () => this._trackedPersistentDashWindows.delete(metaWindow),
             this._persistentDashContainer);
     }
 
@@ -367,6 +347,8 @@ export class Overview extends Signals.EventEmitter {
         this._persistentDash = null;
         this._persistentDashContainer = null;
         this._persistentDashShown = false;
+        this._persistentDashVisibilityQueued = false;
+        this._cachedDashRect = null;
         this._trackedPersistentDashWindows.clear();
     }
 
@@ -400,21 +382,32 @@ export class Overview extends Signals.EventEmitter {
         if (!monitor)
             return false;
 
-        let [, preferredDashHeight] =
-            this._persistentDash.get_preferred_height(monitor.width);
-        const maxDashHeight =
-            Math.round(monitor.height * PERSISTENT_DASH_MAX_HEIGHT_RATIO);
-        preferredDashHeight = Math.min(preferredDashHeight, maxDashHeight);
+        // Reuse cached dashRect when monitor hasn't changed
+        if (!this._cachedDashRect ||
+            this._cachedDashMonitorIndex !== monitor.index) {
+            this._cachedDashMonitorIndex = monitor.index;
+            this._cachedDashRect = null; // will be set below
+        }
 
-        const dashHeight = Math.max(
-            1,
-            preferredDashHeight + PERSISTENT_DASH_BOTTOM_MARGIN);
-        const dashRect = {
-            x: monitor.x,
-            y: monitor.y + monitor.height - dashHeight,
-            width: monitor.width,
-            height: dashHeight,
-        };
+        let dashRect = this._cachedDashRect;
+        if (!dashRect) {
+            let [, preferredDashHeight] =
+                this._persistentDash.get_preferred_height(monitor.width);
+            const maxDashHeight =
+                Math.round(monitor.height * PERSISTENT_DASH_MAX_HEIGHT_RATIO);
+            preferredDashHeight = Math.min(preferredDashHeight, maxDashHeight);
+
+            const dashHeight = Math.max(
+                1,
+                preferredDashHeight + PERSISTENT_DASH_BOTTOM_MARGIN);
+            dashRect = {
+                x: monitor.x,
+                y: monitor.y + monitor.height - dashHeight,
+                width: monitor.width,
+                height: dashHeight,
+            };
+            this._cachedDashRect = dashRect;
+        }
 
         const activeWorkspace = global.workspace_manager.get_active_workspace();
 
@@ -483,6 +476,24 @@ export class Overview extends Signals.EventEmitter {
     }
 
     _updatePersistentDashVisibility(animate = true) {
+        if (!this._persistentDashContainer)
+            return;
+
+        // Debounce rapid-fire signal updates into a single idle callback
+        if (animate && !this._persistentDashVisibilityQueued) {
+            this._persistentDashVisibilityQueued = true;
+            GLib.idle_add(GLib.PRIORITY_DEFAULT_IDLE, () => {
+                this._persistentDashVisibilityQueued = false;
+                this._applyPersistentDashVisibility(true);
+                return GLib.SOURCE_REMOVE;
+            });
+            return;
+        } else if (!animate) {
+            this._applyPersistentDashVisibility(false);
+        }
+    }
+
+    _applyPersistentDashVisibility(animate = true) {
         if (!this._persistentDashContainer)
             return;
 
@@ -600,6 +611,8 @@ export class Overview extends Signals.EventEmitter {
         this._coverPane.set_position(0, 0);
         this._coverPane.set_size(global.screen_width, global.screen_height);
 
+        // Monitor changed, invalidate dashRect cache
+        this._cachedDashRect = null;
         this._updatePersistentDashLayout();
         this._updatePersistentDashVisibility();
     }
@@ -690,8 +703,8 @@ export class Overview extends Signals.EventEmitter {
     }
 
     focusSearch() {
+        // Search is disabled; just show the overview
         this.show();
-        this._overview.searchEntry.grab_key_focus();
     }
 
     // Checks if the Activities button is currently sensitive to

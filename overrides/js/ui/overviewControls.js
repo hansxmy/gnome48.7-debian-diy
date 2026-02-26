@@ -17,7 +17,7 @@ import * as WindowManager from './windowManager.js';
 import * as WorkspaceThumbnail from './workspaceThumbnail.js';
 import * as WorkspacesView from './workspacesView.js';
 
-export const SMALL_WORKSPACE_RATIO = 0.15;
+export const SMALL_WORKSPACE_RATIO = 0.22;
 const DASH_MAX_HEIGHT_RATIO = 0.128;
 const VERTICAL_SPACING_RATIO = 0.02;
 const THUMBNAILS_SPACING_ADJUSTMENT_TOP = 0.6;
@@ -25,7 +25,7 @@ const THUMBNAILS_SPACING_ADJUSTMENT_BOTTOM = 0.4;
 
 const A11Y_SCHEMA = 'org.gnome.desktop.a11y.keyboard';
 
-export const SIDE_CONTROLS_ANIMATION_TIME = 250;
+export const SIDE_CONTROLS_ANIMATION_TIME = 200;
 
 /** @enum {number} */
 export const ControlsState = {
@@ -97,12 +97,18 @@ class ControlsManagerLayout extends Clutter.LayoutManager {
                 searchHeight - Math.round(spacing * THUMBNAILS_SPACING_ADJUSTMENT_TOP) -
                 thumbnailsHeight - Math.round(spacing * THUMBNAILS_SPACING_ADJUSTMENT_BOTTOM) * expandFraction);
             break;
-        case ControlsState.APP_GRID:
-            workspaceBox.set_origin(0, startY + searchHeight + spacing);
-            workspaceBox.set_size(
-                width,
-                Math.round(height * SMALL_WORKSPACE_RATIO));
+        case ControlsState.APP_GRID: {
+            const previewHeight = Math.round(height * SMALL_WORKSPACE_RATIO);
+            const monitor = Main.layoutManager.primaryMonitor;
+            const aspect = monitor
+                ? monitor.width / monitor.height : 16 / 9;
+            const previewWidth = Math.round(
+                Math.min(previewHeight * aspect, width * 0.7));
+            const xOrigin = Math.round((width - previewWidth) / 2);
+            workspaceBox.set_origin(xOrigin, startY + searchHeight + spacing);
+            workspaceBox.set_size(previewWidth, previewHeight);
             break;
+        }
         }
 
         return workspaceBox;
@@ -323,21 +329,29 @@ class ControlsManager extends St.Widget {
         this._ignoreShowAppsButtonToggle = false;
         this._usesSharedDash = sharedDash !== null;
 
-        this._searchEntry = new St.Entry({
+        // RAM usage label instead of search entry
+        this._ramLabel = new St.Label({
             style_class: 'search-entry',
-            /* Translators: this is the text displayed
-               in the search entry when no search is
-               active; it should not exceed ~30
-               characters. */
-            hint_text: _('Type to search'),
-            track_hover: true,
-            can_focus: true,
-        });
-        this._searchEntry.set_offscreen_redirect(Clutter.OffscreenRedirect.ALWAYS);
-        this._searchEntryBin = new St.Bin({
-            child: this._searchEntry,
+            text: 'RAM占用：--',
             x_align: Clutter.ActorAlign.CENTER,
+            y_align: Clutter.ActorAlign.CENTER,
+            x_expand: true,
+            y_expand: true,
+            style: 'text-align: center; padding: 0 24px; font-size: 14px;',
         });
+        this._searchEntry = this._ramLabel;
+        this._searchEntryBin = new St.Bin({
+            child: this._ramLabel,
+            x_align: Clutter.ActorAlign.CENTER,
+            style: 'max-width: 280px;',
+        });
+
+        this._ramUpdateTimerId = 0;
+        this._textDecoder = new TextDecoder();
+        this._lastThumbnailsOpacity = -1;
+        this._lastThumbnailsScale = -1;
+        this._lastThumbnailsTranslationY = -1;
+        this._startRamMonitor();
 
         this.dash = sharedDash ?? new Dash.Dash();
 
@@ -347,11 +361,15 @@ class ControlsManager extends St.Widget {
         this._stateAdjustment.connectObject('notify::value',
             () => this._update(), this);
 
+        this._lastCornerRadius = 0;
+
+        // Create a dummy search entry for SearchController compatibility
+        this._dummySearchEntry = new St.Entry({visible: false});
         this._searchController = new SearchController.SearchController(
-            this._searchEntry,
+            this._dummySearchEntry,
             this.dash.showAppsButton);
-        this._searchController.connectObject('notify::search-active',
-            () => this._onSearchChanged(), this);
+        // Prevent search from ever activating
+        this._searchController.visible = false;
 
         Main.layoutManager.connectObject('monitors-changed', () =>
             this._thumbnailsBox.setMonitorIndex(Main.layoutManager.primaryIndex), this);
@@ -555,7 +573,20 @@ class ControlsManager extends St.Widget {
         const {searchActive} = this._searchController;
         const [opacity, scale, translationY] = this._getThumbnailsBoxParams();
 
+        const targetOpacity = searchActive ? 0 : opacity;
         const thumbnailsBoxVisible = shouldShow && !searchActive && opacity !== 0;
+
+        // Skip redundant ease calls during per-frame _update()
+        if (!animate &&
+            targetOpacity === this._lastThumbnailsOpacity &&
+            scale === this._lastThumbnailsScale &&
+            translationY === this._lastThumbnailsTranslationY) {
+            return;
+        }
+        this._lastThumbnailsOpacity = targetOpacity;
+        this._lastThumbnailsScale = scale;
+        this._lastThumbnailsTranslationY = translationY;
+
         if (thumbnailsBoxVisible) {
             this._thumbnailsBox.opacity = 0;
             this._thumbnailsBox.visible = thumbnailsBoxVisible;
@@ -563,7 +594,7 @@ class ControlsManager extends St.Widget {
         }
 
         const params = {
-            opacity: searchActive ? 0 : opacity,
+            opacity: targetOpacity,
             duration: animate ? SIDE_CONTROLS_ANIMATION_TIME : 0,
             mode: Clutter.AnimationMode.EASE_OUT_QUAD,
             onComplete: () => {
@@ -605,44 +636,30 @@ class ControlsManager extends St.Widget {
         const {fitModeAdjustment} = this._workspacesDisplay;
         fitModeAdjustment.value = fitMode;
 
+        // Rounded corners on workspace preview in APP_GRID state
+        const initialRadius =
+            params.initialState === ControlsState.APP_GRID ? 18 : 0;
+        const finalRadius =
+            params.finalState === ControlsState.APP_GRID ? 18 : 0;
+        const radius = Math.round(
+            Util.lerp(initialRadius, finalRadius, params.progress));
+        if (radius !== this._lastCornerRadius) {
+            this._lastCornerRadius = radius;
+            this._workspacesDisplay.style =
+                radius > 0 ? `border-radius: ${radius}px;` : null;
+        }
+
         this._updateThumbnailsBox();
         this._updateAppDisplayVisibility(params);
     }
 
     _onSearchChanged() {
-        const {searchActive} = this._searchController;
-
-        if (!searchActive) {
-            this._updateAppDisplayVisibility();
-            this._workspacesDisplay.reactive = true;
-            this._workspacesDisplay.setPrimaryWorkspaceVisible(true);
-        } else {
-            this._searchController.show();
-        }
-
-        this._updateThumbnailsBox(true);
-
-        this._appDisplay.ease({
-            opacity: searchActive ? 0 : 255,
-            duration: SIDE_CONTROLS_ANIMATION_TIME,
-            mode: Clutter.AnimationMode.EASE_OUT_QUAD,
-            onComplete: () => this._updateAppDisplayVisibility(),
-        });
-        this._workspacesDisplay.ease({
-            opacity: searchActive ? 0 : 255,
-            duration: SIDE_CONTROLS_ANIMATION_TIME,
-            mode: Clutter.AnimationMode.EASE_OUT_QUAD,
-            onComplete: () => {
-                this._workspacesDisplay.reactive = !searchActive;
-                this._workspacesDisplay.setPrimaryWorkspaceVisible(!searchActive);
-            },
-        });
-        this._searchController.ease({
-            opacity: searchActive ? 255 : 0,
-            duration: SIDE_CONTROLS_ANIMATION_TIME,
-            mode: Clutter.AnimationMode.EASE_OUT_QUAD,
-            onComplete: () => (this._searchController.visible = searchActive),
-        });
+        // Search is disabled; keep everything visible
+        this._updateAppDisplayVisibility();
+        this._workspacesDisplay.reactive = true;
+        this._workspacesDisplay.setPrimaryWorkspaceVisible(true);
+        this._updateThumbnailsBox();
+        this._searchController.visible = false;
     }
 
     _onShowAppsButtonToggled() {
@@ -709,13 +726,53 @@ class ControlsManager extends St.Widget {
     }
 
     _onDestroy() {
+        if (this._ramUpdateTimerId) {
+            GLib.source_remove(this._ramUpdateTimerId);
+            this._ramUpdateTimerId = 0;
+        }
         delete this._searchEntryBin;
         delete this._appDisplay;
         if (!this._usesSharedDash)
             delete this.dash;
         delete this._searchController;
+        delete this._dummySearchEntry;
         delete this._thumbnailsBox;
         delete this._workspacesDisplay;
+    }
+
+    _startRamMonitor() {
+        this._updateRamLabel();
+        this._ramUpdateTimerId = GLib.timeout_add_seconds(
+            GLib.PRIORITY_DEFAULT_IDLE, 5, () => {
+                this._updateRamLabel();
+                return GLib.SOURCE_CONTINUE;
+            });
+    }
+
+    _updateRamLabel() {
+        try {
+            const path = '/proc/meminfo';
+            const [ok, contents] = GLib.file_get_contents(path);
+            if (!ok)
+                return;
+
+            const text = this._textDecoder.decode(contents);
+            const lines = text.split('\n');
+            let memTotal = 0, memAvailable = 0;
+            for (const line of lines) {
+                if (line.startsWith('MemTotal:'))
+                    memTotal = parseInt(line.split(/\s+/)[1], 10);
+                else if (line.startsWith('MemAvailable:'))
+                    memAvailable = parseInt(line.split(/\s+/)[1], 10);
+            }
+            if (memTotal > 0) {
+                const usedGB = ((memTotal - memAvailable) / 1048576).toFixed(1);
+                const totalGB = (memTotal / 1048576).toFixed(0);
+                this._ramLabel.text = `RAM占用：${usedGB}G / ${totalGB}G`;
+            }
+        } catch (e) {
+            // Silently ignore
+        }
     }
 
     prepareToEnterOverview() {

@@ -13,7 +13,7 @@ import * as IconGrid from './iconGrid.js';
 import * as Main from './main.js';
 import * as Overview from './overview.js';
 
-const DASH_ANIMATION_TIME = 200;
+const DASH_ANIMATION_TIME = 150;
 const DASH_ITEM_LABEL_SHOW_TIME = 150;
 const DASH_ITEM_LABEL_HIDE_TIME = 100;
 const DASH_ITEM_HOVER_TIMEOUT = 300;
@@ -438,6 +438,9 @@ export const Dash = GObject.registerClass({
         this.add_child(this._dashContainer);
 
         this._workId = Main.initializeDeferredWork(this._box, this._redisplay.bind(this));
+
+        this._iconGeometryPending = false;
+        this.connect('notify::allocation', () => this._queueIconGeometryUpdate());
 
         this._appSystem = Shell.AppSystem.get_default();
 
@@ -904,6 +907,53 @@ export const Dash = GObject.registerClass({
         // Workaround for https://bugzilla.gnome.org/show_bug.cgi?id=692744
         // Without it, StBoxLayout may use a stale size cache
         this._box.queue_relayout();
+
+        // Update icon geometry so minimize animations target the correct icon
+        this._queueIconGeometryUpdate();
+    }
+
+    _queueIconGeometryUpdate() {
+        if (this._iconGeometryPending)
+            return;
+        this._iconGeometryPending = true;
+        const laters = global.compositor.get_laters();
+        laters.add(Meta.LaterType.BEFORE_REDRAW, () => {
+            this._iconGeometryPending = false;
+            this._updateIconGeometry();
+            return GLib.SOURCE_REMOVE;
+        });
+    }
+
+    _updateIconGeometry() {
+        if (!this.get_stage())
+            return;
+
+        const children = this._box.get_children();
+        for (const child of children) {
+            const icon = child.child;
+            if (!icon || !icon._delegate || !icon._delegate.app)
+                continue;
+
+            const app = icon._delegate.app;
+            if (app.state !== Shell.AppState.RUNNING)
+                continue;
+
+            if (!child.is_mapped())
+                continue;
+
+            const [x, y] = child.get_transformed_position();
+            const [w, h] = child.get_transformed_size();
+            const rect = new Meta.Rectangle({
+                x: Math.round(x),
+                y: Math.round(y),
+                width: Math.round(w),
+                height: Math.round(h),
+            });
+
+            const windows = app.get_windows();
+            for (const metaWindow of windows)
+                metaWindow.set_icon_geometry(rect);
+        }
     }
 
     _clearDragPlaceholder() {
