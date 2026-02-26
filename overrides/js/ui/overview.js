@@ -261,7 +261,7 @@ export class Overview extends Signals.EventEmitter {
         this._persistentDash = new Dash.Dash();
         this._persistentDashContainer = new St.Widget({
             name: 'persistentDashContainer',
-            reactive: true,
+            reactive: false,
             layout_manager: new Clutter.BinLayout(),
         });
         this._persistentDashContainer.add_constraint(
