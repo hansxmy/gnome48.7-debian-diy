@@ -18,6 +18,11 @@
 2. 在 GitHub Actions 手动触发 `Build Dock GNOME Shell .deb`。
 3. 下载 `dist/` 产物并在 Debian 上安装。
 
+## CI 产包说明
+
+- 当前 workflow 默认 `RUN_TESTS=0`，会跳过上游自动化测试，目标是稳定产出完整 `gnome-shell` 二进制包（`gnome-shell`/`gnome-shell-common` 等）。
+- 如果你想在 CI 里同时跑测试，可把 workflow 的 `RUN_TESTS` 改为 `1`。
+
 ## Debian 安装与回滚
 
 安装前先执行：
