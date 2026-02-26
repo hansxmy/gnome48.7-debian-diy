@@ -3,6 +3,7 @@ import GLib from 'gi://GLib';
 import GObject from 'gi://GObject';
 import Graphene from 'gi://Graphene';
 import Meta from 'gi://Meta';
+import Mtk from 'gi://Mtk';
 import Shell from 'gi://Shell';
 import St from 'gi://St';
 
@@ -444,25 +445,25 @@ export const Dash = GObject.registerClass({
 
         this._appSystem = Shell.AppSystem.get_default();
 
-        this._appSystem.connect('installed-changed', () => {
-            AppFavorites.getAppFavorites().reload();
-            this._queueRedisplay();
-        });
-        AppFavorites.getAppFavorites().connect('changed', this._queueRedisplay.bind(this));
-        this._appSystem.connect('app-state-changed', this._queueRedisplay.bind(this));
+        this._appSystem.connectObject(
+            'installed-changed', () => {
+                AppFavorites.getAppFavorites().reload();
+                this._queueRedisplay();
+            },
+            'app-state-changed', this._queueRedisplay.bind(this),
+            this);
+        AppFavorites.getAppFavorites().connectObject(
+            'changed', this._queueRedisplay.bind(this),
+            this);
 
-        Main.overview.connect('item-drag-begin',
-            this._onItemDragBegin.bind(this));
-        Main.overview.connect('item-drag-end',
-            this._onItemDragEnd.bind(this));
-        Main.overview.connect('item-drag-cancelled',
-            this._onItemDragCancelled.bind(this));
-        Main.overview.connect('window-drag-begin',
-            this._onWindowDragBegin.bind(this));
-        Main.overview.connect('window-drag-cancelled',
-            this._onWindowDragEnd.bind(this));
-        Main.overview.connect('window-drag-end',
-            this._onWindowDragEnd.bind(this));
+        Main.overview.connectObject(
+            'item-drag-begin', this._onItemDragBegin.bind(this),
+            'item-drag-end', this._onItemDragEnd.bind(this),
+            'item-drag-cancelled', this._onItemDragCancelled.bind(this),
+            'window-drag-begin', this._onWindowDragBegin.bind(this),
+            'window-drag-cancelled', this._onWindowDragEnd.bind(this),
+            'window-drag-end', this._onWindowDragEnd.bind(this),
+            this);
 
         // Translators: this is the name of the dock/favorites area on
         // the bottom of the overview
@@ -943,7 +944,7 @@ export const Dash = GObject.registerClass({
 
             const [x, y] = child.get_transformed_position();
             const [w, h] = child.get_transformed_size();
-            const rect = new Meta.Rectangle({
+            const rect = new Mtk.Rectangle({
                 x: Math.round(x),
                 y: Math.round(y),
                 width: Math.round(w),

@@ -353,7 +353,7 @@ export class Overview extends Signals.EventEmitter {
     }
 
     _updatePersistentDashLayout() {
-        if (!this._persistentDash)
+        if (!this._persistentDash || !this._persistentDashContainer?.get_stage())
             return;
 
         const monitor = Main.layoutManager.primaryMonitor;
@@ -494,7 +494,7 @@ export class Overview extends Signals.EventEmitter {
     }
 
     _applyPersistentDashVisibility(animate = true) {
-        if (!this._persistentDashContainer)
+        if (!this._persistentDashContainer || !this._persistentDashContainer.get_stage())
             return;
 
         if (this._visible || this._animationInProgress) {
