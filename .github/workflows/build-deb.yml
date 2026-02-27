@@ -19,6 +19,7 @@ jobs:
       - name: Build .deb
         env:
           RUN_TESTS: '1'
+          LOCAL_SUFFIX: "+${{ github.ref_name }}"
         run: |
           chmod +x scripts/build-deb.sh
           ./scripts/build-deb.sh

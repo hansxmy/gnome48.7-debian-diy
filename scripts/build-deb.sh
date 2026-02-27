@@ -47,9 +47,21 @@ cp -f "$ROOT_DIR/overrides/js/ui-root/main.js" js/ui/main.js
 cp -f "$ROOT_DIR/overrides/js/ui-root/windowManager.js" js/ui/windowManager.js
 
 # Patch keyboard.js: add null check for actor in maybeHandleEvent
-# 修复 keyboard.js:1165 Clutter.Actor.contains: assertion 'descendant != NULL' failed
+# 修复 keyboard.js Clutter.Actor.contains: assertion 'descendant != NULL' failed
 # get_event_actor() 挂起恢复后可能返回 null，导致 contains() 断言崩溃
-sed -i '/const actor = global\.stage\.get_event_actor(event);/a\        if (!actor)\n            return false;' js/ui/keyboard.js
+python3 - <<'EOF'
+import re
+path = 'js/ui/keyboard.js'
+content = open(path).read()
+target = '        const actor = global.stage.get_event_actor(event);'
+guard  = '        if (!actor)\n            return false;\n'
+if target in content and guard not in content:
+    content = content.replace(target, target + '\n' + guard, 1)
+    open(path, 'w').write(content)
+    print('keyboard.js: null actor guard applied')
+else:
+    print('keyboard.js: patch already applied or target not found')
+EOF
 
 export DEBEMAIL="${DEBEMAIL:-dock-builder@example.invalid}"
 export DEBFULLNAME="${DEBFULLNAME:-Dock Builder}"
