@@ -46,6 +46,11 @@ cp -f "$ROOT_DIR/overrides/js/ui/panel.js" js/ui/panel.js
 cp -f "$ROOT_DIR/overrides/js/ui-root/main.js" js/ui/main.js
 cp -f "$ROOT_DIR/overrides/js/ui-root/windowManager.js" js/ui/windowManager.js
 
+# Patch keyboard.js: add null check for actor in maybeHandleEvent
+# 修复 keyboard.js:1165 Clutter.Actor.contains: assertion 'descendant != NULL' failed
+# get_event_actor() 挂起恢复后可能返回 null，导致 contains() 断言崩溃
+sed -i '/const actor = global\.stage\.get_event_actor(event);/a\        if (!actor)\n            return false;' js/ui/keyboard.js
+
 export DEBEMAIL="${DEBEMAIL:-dock-builder@example.invalid}"
 export DEBFULLNAME="${DEBFULLNAME:-Dock Builder}"
 dch --local "$LOCAL_SUFFIX" --distribution "$DISTRO" "Dock custom build"
