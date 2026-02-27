@@ -36,6 +36,9 @@ class OverviewActor extends St.BoxLayout {
                 activities. See also note for "Activities" string. */
             accessible_name: _('Overview'),
             orientation: Clutter.Orientation.VERTICAL,
+            // Soften the pure-black stage edges — a very dark gray reduces
+            // the harsh contrast around workspace previews.
+            style: 'background-color: rgba(18,20,25,0.88);',
         });
 
         this.add_constraint(new LayoutManager.MonitorConstraint({primary: true}));
@@ -258,7 +261,10 @@ export class Overview extends Signals.EventEmitter {
         if (this._persistentDashContainer || this.isDummy)
             return;
 
-        this._persistentDash = new Dash.Dash();
+        // Reuse the existing dash kept alive across session transitions,
+        // or create a new one on first call
+        if (!this._persistentDash)
+            this._persistentDash = new Dash.Dash();
         this._persistentDashContainer = new St.Widget({
             name: 'persistentDashContainer',
             reactive: false,
@@ -341,10 +347,17 @@ export class Overview extends Signals.EventEmitter {
         if (!this._persistentDashContainer)
             return;
 
+        // Remove the dash from the container BEFORE destroying it.
+        // The dash is shared with ControlsManager — destroying it here
+        // would leave ControlsManager with a disposed reference, causing
+        // "impossible to access" errors after suspend/resume cycles.
+        if (this._persistentDash?.get_parent() === this._persistentDashContainer)
+            this._persistentDashContainer.remove_child(this._persistentDash);
+
         Main.layoutManager.removeChrome(this._persistentDashContainer);
         this._persistentDashContainer.destroy();
 
-        this._persistentDash = null;
+        // Keep _persistentDash alive — ControlsManager still references it
         this._persistentDashContainer = null;
         this._persistentDashShown = false;
         this._persistentDashVisibilityQueued = false;

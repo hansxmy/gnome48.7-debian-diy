@@ -176,12 +176,16 @@ class ControlsManagerLayout extends Clutter.LayoutManager {
             availableHeight -= searchHeight + spacing;
         }
 
-        // Dash
+        // Dash — guard against disposed dash (session transitions)
+        let dashHeight = 0;
         const maxDashHeight = Math.round(box.get_height() * DASH_MAX_HEIGHT_RATIO);
-        this._dash.setMaxSize(width, maxDashHeight);
-
-        let [, dashHeight] = this._dash.get_preferred_height(width);
-        dashHeight = Math.min(dashHeight, maxDashHeight);
+        try {
+            this._dash.setMaxSize(width, maxDashHeight);
+            [, dashHeight] = this._dash.get_preferred_height(width);
+            dashHeight = Math.min(dashHeight, maxDashHeight);
+        } catch (_e) {
+            dashHeight = 0;
+        }
         if (this._dash.get_parent() === container) {
             childBox.set_origin(0, startY + height - dashHeight);
             childBox.set_size(width, dashHeight);
@@ -348,6 +352,7 @@ class ControlsManager extends St.Widget {
             () => this._update(), this);
 
         this._lastCornerRadius = 0;
+        this._lastFitMode = -1;
 
         // Create a dummy search entry for SearchController compatibility
         this._dummySearchEntry = new St.Entry({visible: false});
@@ -578,9 +583,24 @@ class ControlsManager extends St.Widget {
             this._thumbnailsBox.expandFraction = 1.0;
         }
 
+        // Per-frame calls (duration 0): set properties directly instead of
+        // creating/completing throwaway Clutter transition objects.
+        if (!animate) {
+            this._thumbnailsBox.opacity = targetOpacity;
+            if (!searchActive) {
+                this._thumbnailsBox.scale_x = scale;
+                this._thumbnailsBox.scale_y = scale;
+                this._thumbnailsBox.translation_y = translationY;
+            }
+            this._thumbnailsBox.visible = thumbnailsBoxVisible;
+            if (!thumbnailsBoxVisible)
+                this._thumbnailsBox.expandFraction = 0.0;
+            return;
+        }
+
         const params = {
             opacity: targetOpacity,
-            duration: animate ? SIDE_CONTROLS_ANIMATION_TIME : 0,
+            duration: SIDE_CONTROLS_ANIMATION_TIME,
             mode: Clutter.AnimationMode.EASE_OUT_QUAD,
             onComplete: () => {
                 this._thumbnailsBox.visible = thumbnailsBoxVisible;
@@ -618,8 +638,11 @@ class ControlsManager extends St.Widget {
             this._getFitModeForState(params.finalState),
             params.progress);
 
-        const {fitModeAdjustment} = this._workspacesDisplay;
-        fitModeAdjustment.value = fitMode;
+        // Avoid redundant notify::value on every frame
+        if (fitMode !== this._lastFitMode) {
+            this._lastFitMode = fitMode;
+            this._workspacesDisplay.fitModeAdjustment.value = fitMode;
+        }
 
         // Rounded corners on workspace preview in APP_GRID state
         const initialRadius =
@@ -633,7 +656,7 @@ class ControlsManager extends St.Widget {
             if (radius > 0) {
                 this._workspacesDisplay.set({clip_to_allocation: true});
                 this._workspacesDisplay.style =
-                    `border-radius: ${radius}px; background-color: rgba(0,0,0,0.15);`;
+                    `border-radius: ${radius}px;`;
             } else {
                 this._workspacesDisplay.set({clip_to_allocation: false});
                 this._workspacesDisplay.style = null;
@@ -657,7 +680,12 @@ class ControlsManager extends St.Widget {
         if (this._ignoreShowAppsButtonToggle)
             return;
 
-        const checked = this.dash.showAppsButton.checked;
+        let checked;
+        try {
+            checked = this.dash.showAppsButton.checked;
+        } catch (_e) {
+            return;
+        }
 
         if (!Main.overview.visible) {
             if (checked)
@@ -749,8 +777,12 @@ class ControlsManager extends St.Widget {
             },
         });
 
-        this.dash.showAppsButton.checked =
-            state === ControlsState.APP_GRID;
+        try {
+            this.dash.showAppsButton.checked =
+                state === ControlsState.APP_GRID;
+        } catch (_e) {
+            // Dash may be disposed during session transitions
+        }
 
         this._ignoreShowAppsButtonToggle = false;
     }
@@ -762,7 +794,11 @@ class ControlsManager extends St.Widget {
             duration: Overview.ANIMATION_TIME,
             mode: Clutter.AnimationMode.EASE_OUT_QUAD,
             onStopped: () => {
-                this.dash.showAppsButton.checked = false;
+                try {
+                    this.dash.showAppsButton.checked = false;
+                } catch (_e) {
+                    // Dash may be disposed during session transitions
+                }
                 this._ignoreShowAppsButtonToggle = false;
 
                 if (callback)
