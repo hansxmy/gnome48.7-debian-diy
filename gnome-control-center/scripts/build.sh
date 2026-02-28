@@ -68,6 +68,7 @@ OVERLAY_FILES=(
   "shell/cc-panel-loader.c"
   "shell/cc-panel-list.c"
   "shell/meson.build"
+  "tests/meson.build"
 )
 
 for f in "${OVERLAY_FILES[@]}"; do
