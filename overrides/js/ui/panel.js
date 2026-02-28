@@ -32,6 +32,7 @@ import * as ThunderboltStatus from './status/thunderbolt.js';
 import * as AutoRotateStatus from './status/autoRotate.js';
 import * as BackgroundAppsStatus from './status/backgroundApps.js';
 
+import {ClipboardIndicator} from './clipboardIndicator.js';
 import {DateMenuButton} from './dateMenu.js';
 import {ATIndicator} from './status/accessibility.js';
 import {InputSourceIndicator} from './status/keyboard.js';
@@ -678,6 +679,11 @@ class Panel extends St.Widget {
             () => this.queue_relayout(),
             this);
         this._updatePanel();
+
+        // ── Clipboard indicator (built-in, replaces extension) ──
+        this._clipboardIndicator = new ClipboardIndicator();
+        this.addToStatusArea('clipboardIndicator',
+            this._clipboardIndicator, 1, 'right');
     }
 
     vfunc_get_preferred_width(_forHeight) {
