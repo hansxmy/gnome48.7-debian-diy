@@ -1,0 +1,52 @@
+name: Build Surface GO GNOME .deb packages
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container:
+      image: debian:trixie
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build gnome-shell
+        env:
+          RUN_TESTS: '0'
+          LOCAL_SUFFIX: "+${{ github.ref_name }}"
+        run: |
+          chmod +x gnome-shell/scripts/build-deb.sh
+          ./gnome-shell/scripts/build-deb.sh
+
+      - name: Build gnome-control-center
+        env:
+          RUN_TESTS: '0'
+          LOCAL_SUFFIX: "+${{ github.ref_name }}"
+        run: |
+          chmod +x gnome-control-center/scripts/build.sh
+          ./gnome-control-center/scripts/build.sh
+
+      - name: Collect all debs
+        run: |
+          mkdir -p dist
+          cp -v gnome-shell/dist/*.deb dist/
+          cp -v gnome-control-center/dist/*.deb dist/
+          ls -lh dist/
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: surface-go-debs-${{ github.ref_name }}
+          path: dist/*
+
+      - name: Publish release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
