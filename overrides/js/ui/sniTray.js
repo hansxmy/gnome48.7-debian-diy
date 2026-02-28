@@ -47,8 +47,9 @@ const SniTrayIcon = GObject.registerClass({
 
     /**
      * Override PanelMenu.Button's default click handler.
-     * - Left-click + ItemIsMenu=false → Activate() (show/hide app window)
-     * - Right-click or ItemIsMenu=true → toggle dbusmenu
+     * - Mouse left-click + ItemIsMenu=false → Activate() (show/hide app window)
+     * - Mouse right-click, or ItemIsMenu=true, or touch → toggle dbusmenu
+     * Touch always opens menu because there's no right-click on touchscreen.
      */
     vfunc_event(event) {
         const type = event.type();
@@ -56,15 +57,21 @@ const SniTrayIcon = GObject.registerClass({
             type !== Clutter.EventType.TOUCH_BEGIN)
             return Clutter.EVENT_PROPAGATE;
 
-        const button = type === Clutter.EventType.BUTTON_PRESS
-            ? event.get_button() : Clutter.BUTTON_PRIMARY;
+        // Touch always → menu (no right-click on touchscreen)
+        if (type === Clutter.EventType.TOUCH_BEGIN) {
+            if (this.menu)
+                this.menu.toggle();
+            return Clutter.EVENT_STOP;
+        }
 
+        // Mouse: left-click + ItemIsMenu=false → Activate
+        const button = event.get_button();
         if (button === Clutter.BUTTON_PRIMARY && !this._item?.itemIsMenu) {
             this._item?.activate();
             return Clutter.EVENT_STOP;
         }
 
-        // Right-click, middle-click, or ItemIsMenu → open menu
+        // Mouse right/middle-click or ItemIsMenu → menu
         if (this.menu)
             this.menu.toggle();
         return Clutter.EVENT_STOP;
