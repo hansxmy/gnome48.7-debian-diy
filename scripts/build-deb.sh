@@ -47,6 +47,10 @@ cp -f "$ROOT_DIR/overrides/js/ui/clipboardIndicator.js" js/ui/clipboardIndicator
 cp -f "$ROOT_DIR/overrides/js/ui/clipboardKeyboard.js" js/ui/clipboardKeyboard.js
 cp -f "$ROOT_DIR/overrides/js/ui/clipboardSync.js" js/ui/clipboardSync.js
 cp -f "$ROOT_DIR/overrides/js/ui/clipboardRegistry.js" js/ui/clipboardRegistry.js
+cp -f "$ROOT_DIR/overrides/js/ui/sniWatcher.js" js/ui/sniWatcher.js
+cp -f "$ROOT_DIR/overrides/js/ui/sniItem.js" js/ui/sniItem.js
+cp -f "$ROOT_DIR/overrides/js/ui/sniMenu.js" js/ui/sniMenu.js
+cp -f "$ROOT_DIR/overrides/js/ui/sniTray.js" js/ui/sniTray.js
 cp -f "$ROOT_DIR/overrides/js/ui-root/main.js" js/ui/main.js
 cp -f "$ROOT_DIR/overrides/js/ui-root/windowManager.js" js/ui/windowManager.js
 

@@ -24,9 +24,9 @@ const CLIPBOARD_TYPE = St.ClipboardType.CLIPBOARD;
 const INDICATOR_ICON = 'edit-paste-symbolic';
 
 // ── Hardcoded settings (no GSettings needed) ──
-const MAX_REGISTRY_LENGTH = 50;
+const MAX_REGISTRY_LENGTH = 20;
 const MAX_ENTRY_LENGTH    = 50;
-const MAX_CACHE_SIZE      = 5;   // MB
+const MAX_CACHE_SIZE      = 20;  // MB
 const SYNC_ENABLED        = true;
 
 export const ClipboardIndicator = GObject.registerClass({
@@ -112,7 +112,7 @@ export const ClipboardIndicator = GObject.registerClass({
         this.scrollViewMenuSection = new PopupMenu.PopupMenuSection();
         this.historyScrollView = new St.ScrollView({
             overlay_scrollbars: true,
-            style: 'max-height: 450px; max-width: 300px;',
+            style: 'max-height: 350px; max-width: 300px;',
         });
         this.historyScrollView.add_child(this.historySection.actor);
         this.scrollViewMenuSection.actor.add_child(this.historyScrollView);

@@ -33,11 +33,12 @@ import * as AutoRotateStatus from './status/autoRotate.js';
 import * as BackgroundAppsStatus from './status/backgroundApps.js';
 
 import {ClipboardIndicator} from './clipboardIndicator.js';
+import {SniTray} from './sniTray.js';
 import {DateMenuButton} from './dateMenu.js';
 import {ATIndicator} from './status/accessibility.js';
 import {InputSourceIndicator} from './status/keyboard.js';
 import {DwellClickIndicator} from './status/dwellClick.js';
-import {ScreenRecordingIndicator, ScreenSharingIndicator} from './status/remoteAccess.js';
+import {ScreenRecordingIndicator} from './status/remoteAccess.js';
 
 const PANEL_ICON_SIZE = 16;
 const APP_MENU_ICON_MARGIN = 0;
@@ -497,6 +498,39 @@ class UnsafeModeIndicator extends SystemIndicator {
     }
 });
 
+// 屏幕共享状态指示器（显示在系统指示器行，和 WiFi/电池同排）
+const ScreenShareIndicator = GObject.registerClass(
+class ScreenShareIndicator extends SystemIndicator {
+    _init() {
+        super._init();
+
+        this._indicator = this._addIndicator();
+        this._indicator.icon_name = 'screen-shared-symbolic';
+        this._indicator.visible = false;
+        this._handles = new Set();
+
+        if (!Meta.is_wayland_compositor())
+            return;
+
+        const controller = global.backend.get_remote_access_controller();
+        controller?.connect('new-handle', (_ctrl, handle) => {
+            // Only track sharing handles, not recording
+            if (handle.is_recording)
+                return;
+            this._handles.add(handle);
+            handle.connect('stopped', () => {
+                this._handles.delete(handle);
+                this._sync();
+            });
+            this._sync();
+        });
+    }
+
+    _sync() {
+        this._indicator.visible = this._handles.size > 0;
+    }
+});
+
 const QuickSettings = GObject.registerClass(
 class QuickSettings extends PanelMenu.Button {
     constructor() {
@@ -545,11 +579,13 @@ class QuickSettings extends PanelMenu.Button {
         this._powerProfiles = new PowerProfileStatus.Indicator();
         this._autoRotate = new AutoRotateStatus.Indicator();
         this._unsafeMode = new UnsafeModeIndicator();
+        this._screenShare = new ScreenShareIndicator();
         this._backgroundApps = new BackgroundAppsStatus.Indicator();
 
         // add privacy-related indicators before any external indicators
         let pos = 0;
         this._indicators.insert_child_at_index(this._remoteAccess, pos++);
+        this._indicators.insert_child_at_index(this._screenShare, pos++);
         this._indicators.insert_child_at_index(this._camera, pos++);
         this._indicators.insert_child_at_index(this._volumeInput, pos++);
         this._indicators.insert_child_at_index(this._location, pos++);
@@ -630,7 +666,6 @@ const PANEL_ITEM_IMPLEMENTATIONS = {
     'keyboard': InputSourceIndicator,
     'dwellClick': DwellClickIndicator,
     'screenRecording': ScreenRecordingIndicator,
-    'screenSharing': ScreenSharingIndicator,
 };
 
 export const Panel = GObject.registerClass(
@@ -684,6 +719,9 @@ class Panel extends St.Widget {
         this._clipboardIndicator = new ClipboardIndicator();
         this.addToStatusArea('clipboardIndicator',
             this._clipboardIndicator, 1, 'right');
+
+        // ── SNI tray (built-in, replaces appindicator extension) ──
+        this._sniTray = new SniTray();
     }
 
     vfunc_get_preferred_width(_forHeight) {
