@@ -32,8 +32,6 @@ import * as ThunderboltStatus from './status/thunderbolt.js';
 import * as AutoRotateStatus from './status/autoRotate.js';
 import * as BackgroundAppsStatus from './status/backgroundApps.js';
 
-import {ClipboardIndicator} from './clipboardIndicator.js';
-import {SniTray} from './sniTray.js';
 import {DateMenuButton} from './dateMenu.js';
 import {ATIndicator} from './status/accessibility.js';
 import {InputSourceIndicator} from './status/keyboard.js';
@@ -721,18 +719,33 @@ class Panel extends St.Widget {
             this);
         this._updatePanel();
 
-        // ── Clipboard indicator (built-in, replaces extension) ──
-        this._clipboardIndicator = new ClipboardIndicator();
-        this.addToStatusArea('clipboardIndicator',
-            this._clipboardIndicator, 1, 'right');
-
-        // ── SNI tray (built-in, replaces appindicator extension) ──
-        this._sniTray = new SniTray();
-
+        // ── Custom components (dynamic import → graceful degradation) ──
         this.connect('destroy', () => {
             this._sniTray?.destroy();
             this._clipboardIndicator?.destroy();
         });
+        this._initCustomComponents().catch(e =>
+            console.error('Panel: custom components init failed', e));
+    }
+
+    async _initCustomComponents() {
+        try {
+            const {ClipboardIndicator} = await import('./clipboardIndicator.js');
+            if (!this.get_stage()) return;
+            this._clipboardIndicator = new ClipboardIndicator();
+            this.addToStatusArea('clipboardIndicator',
+                this._clipboardIndicator, 1, 'right');
+        } catch (e) {
+            console.error('Panel: ClipboardIndicator unavailable', e);
+        }
+
+        try {
+            const {SniTray} = await import('./sniTray.js');
+            if (!this.get_stage()) return;
+            this._sniTray = new SniTray();
+        } catch (e) {
+            console.error('Panel: SniTray unavailable', e);
+        }
     }
 
     vfunc_get_preferred_width(_forHeight) {

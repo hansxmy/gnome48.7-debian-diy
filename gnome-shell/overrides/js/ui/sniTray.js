@@ -47,9 +47,8 @@ const SniTrayIcon = GObject.registerClass({
 
     /**
      * Override PanelMenu.Button's default click handler.
-     * - Mouse left-click + ItemIsMenu=false → Activate() (show/hide app window)
-     * - Mouse right-click, or ItemIsMenu=true, or touch → toggle dbusmenu
-     * Touch always opens menu because there's no right-click on touchscreen.
+     * All clicks (left, right, middle) and touch → toggle dbusmenu.
+     * This follows GNOME/Linux convention: tray icons always open menu.
      */
     vfunc_event(event) {
         const type = event.type();
@@ -57,21 +56,6 @@ const SniTrayIcon = GObject.registerClass({
             type !== Clutter.EventType.TOUCH_BEGIN)
             return Clutter.EVENT_PROPAGATE;
 
-        // Touch always → menu (no right-click on touchscreen)
-        if (type === Clutter.EventType.TOUCH_BEGIN) {
-            if (this.menu)
-                this.menu.toggle();
-            return Clutter.EVENT_STOP;
-        }
-
-        // Mouse: left-click + ItemIsMenu=false → Activate
-        const button = event.get_button();
-        if (button === Clutter.BUTTON_PRIMARY && !this._item?.itemIsMenu) {
-            this._item?.activate();
-            return Clutter.EVENT_STOP;
-        }
-
-        // Mouse right/middle-click or ItemIsMenu → menu
         if (this.menu)
             this.menu.toggle();
         return Clutter.EVENT_STOP;

@@ -1478,6 +1478,10 @@ export class WindowManager {
             this._mapping.add(actor);
 
             await this._waitForOverviewToHide();
+
+            if (!this._mapping.has(actor))
+                return;
+
             actor.ease({
                 opacity: 255,
                 scale_x: 1,
@@ -1496,6 +1500,10 @@ export class WindowManager {
             this._mapping.add(actor);
 
             await this._waitForOverviewToHide();
+
+            if (!this._mapping.has(actor))
+                return;
+
             actor.ease({
                 opacity: 255,
                 scale_x: 1,

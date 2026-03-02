@@ -28,8 +28,10 @@ UNITS=(
   org.gnome.SettingsDaemon.Smartcard.target
   org.gnome.SettingsDaemon.PrintNotifications.service
   org.gnome.SettingsDaemon.PrintNotifications.target
-  # tracker file miner (heavy I/O)
+  # tracker / localsearch file miner (heavy I/O)
+  # Debian 13 (GNOME 48) renamed tracker-miner-fs-3 → localsearch-3
   tracker-miner-fs-3.service
+  localsearch-3.service
   # evolution-data-server (calendar/contacts)
   evolution-addressbook-factory.service
   evolution-calendar-factory.service

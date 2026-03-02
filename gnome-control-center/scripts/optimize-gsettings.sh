@@ -15,6 +15,12 @@ set -euo pipefail
 DRY_RUN=0
 [ "${1:-}" = "--dry-run" ] && DRY_RUN=1
 
+# gsettings 操作 per-user dconf，必须以桌面用户身份运行
+if [ "$(id -u)" -eq 0 ]; then
+  echo "错误: 请以桌面用户身份运行（不要 sudo），否则设置只会写入 root 的 dconf" >&2
+  exit 1
+fi
+
 apply() {
   local schema="$1" key="$2" value="$3"
   local current
@@ -60,11 +66,14 @@ apply org.gnome.desktop.search-providers disable-external true
 apply org.gnome.desktop.search-providers disabled "['org.gnome.Nautilus.desktop', 'org.gnome.Calculator.desktop', 'org.gnome.Characters.desktop', 'org.gnome.clocks.desktop', 'org.gnome.Contacts.desktop', 'org.gnome.Calendar.desktop', 'org.gnome.Terminal.desktop', 'org.gnome.Software.desktop', 'org.gnome.Weather.desktop']"
 
 echo ""
-echo "=== Tracker 索引 ==="
+echo "=== Tracker / LocalSearch 索引 ==="
 # 即使 tracker-miner-fs 被 mask，也确保 gsettings 层面关闭
 # 防止意外 unmask 后立即开始全盘扫描
+# Debian Trixie (GNOME 48) 将 Tracker3 重命名为 LocalSearch3
 apply org.freedesktop.Tracker3.Miner.Files crawling-interval -2
 apply org.freedesktop.Tracker3.Miner.Files enable-monitors false
+apply org.freedesktop.LocalSearch3.Miner.Files crawling-interval -2
+apply org.freedesktop.LocalSearch3.Miner.Files enable-monitors false
 
 echo ""
 echo "=== GNOME Software 自动更新 ==="
@@ -72,6 +81,11 @@ echo "=== GNOME Software 自动更新 ==="
 apply org.gnome.software download-updates false
 apply org.gnome.software allow-updates false
 apply org.gnome.software first-run false
+
+echo ""
+echo "=== 收藏栏清理 ==="
+# 移除 Nautilus（重量级文件管理器），只保留轻量应用
+apply org.gnome.shell favorite-apps "['org.gnome.TextEditor.desktop', 'org.gnome.Terminal.desktop']"
 
 echo ""
 echo "=== 文件管理器性能 ==="

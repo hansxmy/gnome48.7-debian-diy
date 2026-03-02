@@ -67,7 +67,8 @@ echo "=== 2. zram (内存压缩交换，替代 swap 分区) ==="
 # 装系统时不建 swap 分区，省 6.2GB SSD 空间
 
 # 安装 zram-tools（如果没有）
-if ! command -v zramctl &>/dev/null; then
+if ! dpkg -l zram-tools 2>/dev/null | grep -q '^ii'; then
+  echo "  安装 zram-tools ..."
   apt-get install -y zram-tools
 fi
 
@@ -90,13 +91,31 @@ elif systemctl list-unit-files | grep -q 'systemd-zram-setup'; then
   systemctl enable --now systemd-zram-setup@zram0.service
   echo "  systemd-zram 已启用: zram0"
 else
-  # 手动创建
+  # 手动创建 + 持久化 systemd unit
   modprobe zram num_devices=1
-  echo zstd > /sys/block/zram0/comp_algorithm 2>/dev/null || echo lz4 > /sys/block/zram0/comp_algorithm 2>/dev/null || echo "  警告: zram 不支持 zstd/lz4，使用默认算法"
+  echo zstd > /sys/block/zram0/comp_algorithm 2>/dev/null || echo lz4 > /sys/block/zram0/comp_algorithm 2>/dev/null || echo "  警告: zram 不支持 zstd/lz4，使用默认 lzo-rle 算法"
   echo $((4 * 1024 * 1024 * 1024)) > /sys/block/zram0/disksize
   mkswap /dev/zram0
   swapon -p 100 /dev/zram0
-  echo "  zram0 已手动创建: 4GB, priority=100"
+  # 创建 systemd service 确保重启后自动恢复 zram
+  cat > /etc/systemd/system/zram-manual.service <<'UNIT'
+[Unit]
+Description=Manual zram swap (Surface GO)
+After=local-fs.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStartPre=/bin/sh -c 'if [ -e /sys/block/zram0/reset ]; then swapoff /dev/zram0 2>/dev/null; echo 1 > /sys/block/zram0/reset 2>/dev/null; fi; true'
+ExecStart=/bin/sh -c 'modprobe zram num_devices=1 && echo zstd > /sys/block/zram0/comp_algorithm 2>/dev/null; echo 4294967296 > /sys/block/zram0/disksize && mkswap /dev/zram0 && swapon -p 100 /dev/zram0'
+ExecStop=/sbin/swapoff /dev/zram0
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+  systemctl daemon-reload
+  systemctl enable zram-manual.service
+  echo "  zram0 已手动创建: 4GB, priority=100 (systemd unit 已安装，重启后自动恢复)"
 fi
 
 # 如果系统存在 swap 分区，关掉它

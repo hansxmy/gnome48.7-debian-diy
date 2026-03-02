@@ -495,7 +495,7 @@ export class Overview extends Signals.EventEmitter {
             duration: animate ? PERSISTENT_DASH_ANIMATION_TIME : 0,
             mode: Clutter.AnimationMode.EASE_OUT_QUAD,
             onStopped: () => {
-                if (!this._persistentDashShown)
+                if (!this._persistentDashShown && this._persistentDashContainer?.get_stage())
                     this._persistentDashContainer.hide();
             },
         });

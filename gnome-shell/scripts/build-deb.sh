@@ -11,6 +11,11 @@ RUN_TESTS="${RUN_TESTS:-1}"
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WORK_DIR="$ROOT_DIR/work"
 
+if [ "$(id -u)" -ne 0 ]; then
+  echo "错误: 此脚本需要 root 权限运行 (sudo $0)" >&2
+  exit 1
+fi
+
 mkdir -p "$WORK_DIR"
 
 apt-get update
@@ -228,4 +233,8 @@ cp -v ../*.deb "$ROOT_DIR/dist/"
 cp -v ../*.changes "$ROOT_DIR/dist/" || true
 cp -v ../*.buildinfo "$ROOT_DIR/dist/" || true
 
+# 删除不需要的 gnome-shell-extension-prefs 包
+rm -fv "$ROOT_DIR/dist/gnome-shell-extension-prefs"*.deb 2>/dev/null || true
+
 echo "构建完成，产物在: $ROOT_DIR/dist"
+echo "安装命令: sudo dpkg -i dist/gnome-shell_*.deb dist/gnome-shell-common_*.deb"

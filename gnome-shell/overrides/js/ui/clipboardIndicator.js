@@ -34,6 +34,7 @@ export const ClipboardIndicator = GObject.registerClass({
 }, class ClipboardIndicator extends PanelMenu.Button {
     #refreshInProgress = false;
     #lastReceivedHash = null;
+    #pendingRemoteClipboard = null;
 
     destroy() {
         this._flushCache();
@@ -214,6 +215,15 @@ export const ClipboardIndicator = GObject.registerClass({
     _onRemoteClipboard(mimetype, bytes) {
         if (!this._menuReady || this._destroyed)
             return;
+        if (this.#refreshInProgress) {
+            // Defer until current refresh completes to avoid race with local read
+            this.#pendingRemoteClipboard = {mimetype, bytes};
+            return;
+        }
+        this.#applyRemoteClipboard(mimetype, bytes);
+    }
+
+    #applyRemoteClipboard(mimetype, bytes) {
         const entry = new ClipboardEntry(mimetype, bytes);
         this.#lastReceivedHash = entry.getStringValue();
 
@@ -470,6 +480,11 @@ export const ClipboardIndicator = GObject.registerClass({
             console.error('ClipboardIndicator: refresh error', e);
         } finally {
             this.#refreshInProgress = false;
+            if (this.#pendingRemoteClipboard) {
+                const {mimetype, bytes} = this.#pendingRemoteClipboard;
+                this.#pendingRemoteClipboard = null;
+                this._onRemoteClipboard(mimetype, bytes);
+            }
         }
     }
 
@@ -485,7 +500,10 @@ export const ClipboardIndicator = GObject.registerClass({
             'image/webp',
         ];
 
+        let aborted = false;
         for (let type of mimetypes) {
+            if (aborted || this._destroyed)
+                break;
             let result = await Promise.race([
                 new Promise(resolve => {
                     this._clipboard.get_content(
@@ -503,8 +521,9 @@ export const ClipboardIndicator = GObject.registerClass({
                 // Safety timeout: prevents #refreshInProgress stuck forever
                 new Promise(resolve => setTimeout(() => {
                     console.warn('ClipboardIndicator: clipboard read timed out for', type);
+                    aborted = true;
                     resolve(null);
-                }, 5000)),
+                }, 2000)),
             ]);
             if (result)
                 return result;

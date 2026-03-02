@@ -27,6 +27,11 @@ RUN_TESTS="${RUN_TESTS:-0}"
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WORK_DIR="$ROOT_DIR/work"
 
+if [ "$(id -u)" -ne 0 ]; then
+  echo "错误: 此脚本需要 root 权限运行 (sudo $0)" >&2
+  exit 1
+fi
+
 mkdir -p "$WORK_DIR"
 
 apt-get update
