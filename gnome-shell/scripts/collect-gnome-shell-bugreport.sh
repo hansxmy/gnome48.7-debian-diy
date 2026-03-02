@@ -7,7 +7,6 @@ mkdir -p "$OUTDIR"
 PACKAGES=(
   gnome-shell
   gnome-shell-common
-  gnome-shell-extension-prefs
   mutter
   mutter-common
 )
@@ -36,9 +35,10 @@ echo "[2/6] 包版本与候选源..."
 
 echo "[3/6] GNOME/Mutter 关键设置..."
 {
-  gsettings get org.gnome.mutter dynamic-workspaces || true
-  gsettings get org.gnome.desktop.wm.preferences num-workspaces || true
-  gsettings get org.gnome.desktop.interface enable-animations || true
+  echo "dynamic-workspaces=$(gsettings get org.gnome.mutter dynamic-workspaces 2>/dev/null || echo N/A)"
+  echo "num-workspaces=$(gsettings get org.gnome.desktop.wm.preferences num-workspaces 2>/dev/null || echo N/A)"
+  echo "enable-animations=$(gsettings get org.gnome.desktop.interface enable-animations 2>/dev/null || echo N/A)"
+  echo "slow-down-factor=$(gsettings get org.gnome.mutter slow-down-factor 2>/dev/null || echo N/A)"
 } > "$OUTDIR/gsettings.txt"
 
 echo "[4/6] 当前启动日志..."

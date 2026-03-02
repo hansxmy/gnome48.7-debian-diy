@@ -118,11 +118,14 @@ UNIT
   echo "  zram0 已手动创建: 4GB, priority=100 (systemd unit 已安装，重启后自动恢复)"
 fi
 
-# 如果系统存在 swap 分区，关掉它
+# 如果系统存在 swap 分区，关掉它（保留 zram）
 if swapon --show | grep -q 'partition'; then
   echo "  检测到 swap 分区，正在关闭..."
-  swapoff -a
-  swapon /dev/zram0 2>/dev/null || true
+  # 仅关闭非 zram 的 swap 设备，保留 zram 运行
+  swapon --show=NAME,TYPE --noheadings | while read -r name type; do
+    if [ "$type" != "partition" ]; then continue; fi
+    swapoff "$name" && echo "  已关闭: $name" || echo "  关闭失败: $name"
+  done
   # 注释掉 fstab 中的 swap 行防止重启恢复
   cp /etc/fstab /etc/fstab.bak.$(date +%s)
   sed -i '/^[^#].*\sswap\s/s/^/#/' /etc/fstab

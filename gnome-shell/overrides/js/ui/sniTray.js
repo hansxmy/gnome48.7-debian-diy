@@ -47,14 +47,34 @@ const SniTrayIcon = GObject.registerClass({
 
     /**
      * Override PanelMenu.Button's default click handler.
-     * All clicks (left, right, middle) and touch → toggle dbusmenu.
-     * This follows GNOME/Linux convention: tray icons always open menu.
+     *
+     * If the SNI item declares itemIsMenu=false (e.g. Telegram), left click
+     * calls Activate() to raise the app window; otherwise toggles the menu.
+     * Right click and middle click always toggle the dbusmenu.
      */
     vfunc_event(event) {
         const type = event.type();
         if (type !== Clutter.EventType.BUTTON_PRESS &&
             type !== Clutter.EventType.TOUCH_BEGIN)
             return Clutter.EVENT_PROPAGATE;
+
+        const button = type === Clutter.EventType.TOUCH_BEGIN
+            ? Clutter.BUTTON_PRIMARY
+            : event.get_button();
+
+        // Left click: respect itemIsMenu — some apps want Activate on left click
+        if (button === Clutter.BUTTON_PRIMARY &&
+            this._item && !this._item.itemIsMenu) {
+            try {
+                const [x, y] = event.get_coords();
+                this._item.activate(Math.round(x), Math.round(y));
+            } catch (_e) {
+                // Activate failed (app doesn't support it), fall back to menu
+                if (this.menu)
+                    this.menu.toggle();
+            }
+            return Clutter.EVENT_STOP;
+        }
 
         if (this.menu)
             this.menu.toggle();

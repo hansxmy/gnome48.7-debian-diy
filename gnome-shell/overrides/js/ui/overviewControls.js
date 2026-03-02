@@ -817,6 +817,12 @@ class ControlsManager extends St.Widget {
             global.stage.disconnect(this._stageKeyPressId);
             this._stageKeyPressId = 0;
         }
+
+        // 清理键绑定注册
+        Main.wm.removeKeybinding('toggle-application-view');
+        Main.wm.removeKeybinding('shift-overview-up');
+        Main.wm.removeKeybinding('shift-overview-down');
+
         delete this._appDisplay;
         if (!this._usesSharedDash)
             delete this.dash;

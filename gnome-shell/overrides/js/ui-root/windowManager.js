@@ -1427,33 +1427,46 @@ export class WindowManager {
             return Promise.resolve();
 
         return new Promise(resolve => {
+            let settled = false;
             const id = Main.overview.connect('hidden', () => {
+                if (settled) return;
+                settled = true;
                 Main.overview.disconnect(id);
                 resolve();
+            });
+            // 5 秒超时：防止 overview 卡在 SHOWING 状态时窗口永远无法映射
+            GLib.timeout_add(GLib.PRIORITY_DEFAULT, 5000, () => {
+                if (settled) return GLib.SOURCE_REMOVE;
+                settled = true;
+                Main.overview.disconnect(id);
+                resolve();
+                return GLib.SOURCE_REMOVE;
             });
         });
     }
 
     async _mapWindow(shellwm, actor) {
         actor._windowType = actor.meta_window.get_window_type();
-        actor.meta_window.connectObject('notify::window-type', () => {
-            let type = actor.meta_window.get_window_type();
-            if (type === actor._windowType)
-                return;
-            if (type === Meta.WindowType.MODAL_DIALOG ||
-                actor._windowType === Meta.WindowType.MODAL_DIALOG) {
-                let parent = actor.get_meta_window().get_transient_for();
+        actor.meta_window.connectObject(
+            'notify::window-type', () => {
+                let type = actor.meta_window.get_window_type();
+                if (type === actor._windowType)
+                    return;
+                if (type === Meta.WindowType.MODAL_DIALOG ||
+                    actor._windowType === Meta.WindowType.MODAL_DIALOG) {
+                    let parent = actor.get_meta_window().get_transient_for();
+                    if (parent)
+                        this._checkDimming(parent);
+                }
+
+                actor._windowType = type;
+            },
+            'unmanaged', window => {
+                let parent = window.get_transient_for();
                 if (parent)
                     this._checkDimming(parent);
-            }
-
-            actor._windowType = type;
-        }, actor);
-        actor.meta_window.connect('unmanaged', window => {
-            let parent = window.get_transient_for();
-            if (parent)
-                this._checkDimming(parent);
-        });
+            },
+            actor);
 
         if (actor.meta_window.is_attached_dialog())
             this._checkDimming(actor.get_meta_window().get_transient_for());

@@ -8,4 +8,11 @@
 *.css text eol=lf
 *.json text eol=lf
 *.build text eol=lf
+*.md text eol=lf
+*.txt text eol=lf
+*.po text eol=lf
+*.pot text eol=lf
+*.yaml text eol=lf
+*.yml text eol=lf
+*.rst text eol=lf
 Makefile text eol=lf

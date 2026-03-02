@@ -35,6 +35,7 @@ export const ClipboardIndicator = GObject.registerClass({
     #refreshInProgress = false;
     #lastReceivedHash = null;
     #pendingRemoteClipboard = null;
+    #pendingLocalRefresh = false;
 
     destroy() {
         this._flushCache();
@@ -447,8 +448,13 @@ export const ClipboardIndicator = GObject.registerClass({
     }
 
     async _refreshIndicator() {
-        if (!this._menuReady || this.#refreshInProgress || this._destroyed)
+        if (!this._menuReady || this._destroyed)
             return;
+        if (this.#refreshInProgress) {
+            // 标记待处理，避免刷新期间丢失本地剪贴板变更
+            this.#pendingLocalRefresh = true;
+            return;
+        }
         this.#refreshInProgress = true;
 
         try {
@@ -483,7 +489,16 @@ export const ClipboardIndicator = GObject.registerClass({
             if (this.#pendingRemoteClipboard) {
                 const {mimetype, bytes} = this.#pendingRemoteClipboard;
                 this.#pendingRemoteClipboard = null;
-                this._onRemoteClipboard(mimetype, bytes);
+                try {
+                    this._onRemoteClipboard(mimetype, bytes);
+                } catch (e) {
+                    console.error('ClipboardIndicator: pending remote:', e);
+                }
+            }
+            if (this.#pendingLocalRefresh) {
+                this.#pendingLocalRefresh = false;
+                this._refreshIndicator().catch(
+                    e => console.error('ClipboardIndicator: pending local:', e));
             }
         }
     }

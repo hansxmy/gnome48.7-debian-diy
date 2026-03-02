@@ -49,15 +49,10 @@ apply() {
   fi
 }
 
-echo "=== GNOME Shell 动画优化 ==="
-# 不完全关闭动画（关掉会导致部分过渡生硬），而是全局加速
-# GNOME 48: slow-down-factor 在 org.gnome.mutter（非 .debug）schema 中
-# 0.75 = 比默认快 25%，视觉上更灵敏
-# 注: 如果 schema 不存在，apply() 会自动跳过
+echo "=== GNOME Shell 动画 ==="
+# 确保动画处于开启状态（关掉会导致部分过渡生硬）
+# 不调整 slow-down-factor — Surface GO 默认 1.0 即可，不需要加速
 apply org.gnome.desktop.interface enable-animations true
-apply org.gnome.mutter slow-down-factor 0.75
-# 兼容旧版 mutter（slow-down-factor 可能在 .debug schema）
-apply org.gnome.mutter.debug slow-down-factor 0.75
 
 echo ""
 echo "=== 搜索提供程序 ==="
@@ -94,6 +89,12 @@ apply org.gnome.desktop.thumbnailers disable-all true
 # 减少最近文件记录数量
 apply org.gnome.desktop.privacy recent-files-max-age 7
 apply org.gnome.desktop.privacy remember-recent-files true
+
+echo ""
+echo "=== 屏幕使用时间/隐私 ==="
+# 禁用 GNOME 的"使用与时间"（Screen Time）数据收集
+# 这不会移除设置面板，但会停止后台统计
+apply org.gnome.desktop.privacy remember-app-usage false
 
 echo ""
 echo "=== 完成 ==="

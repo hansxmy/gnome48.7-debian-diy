@@ -158,8 +158,12 @@ export class ClipboardSync {
     #unsubSignals() {
         if (this.#signalSubId) {
             try {
-                this.#busConnection?.signal_unsubscribe(this.#signalSubId);
-            } catch (_e) { /* already unsubscribed */ }
+                // 使用 session bus 直接获取连接来取消订阅，
+                // 避免 #busConnection 被 #onNameVanished 置 null 后无法取消
+                const conn = this.#busConnection ??
+                    Gio.bus_get_sync(Gio.BusType.SESSION, null);
+                conn.signal_unsubscribe(this.#signalSubId);
+            } catch (_e) { /* already unsubscribed or bus gone */ }
             this.#signalSubId = 0;
         }
         if (this.#propChangedId && this.#proxy) {
