@@ -43,6 +43,7 @@ import * as WindowManager from './windowManager.js';
 import * as Magnifier from './magnifier.js';
 import * as XdndHandler from './xdndHandler.js';
 import * as KbdA11yDialog from './kbdA11yDialog.js';
+import * as IconGrid from './iconGrid.js';
 import * as LocatePointer from './locatePointer.js';
 import * as PointerA11yTimeout from './pointerA11yTimeout.js';
 import {formatError} from '../misc/errorUtils.js';
@@ -349,6 +350,30 @@ async function _initializeUI() {
 
     layoutManager.init();
     overview.init();
+
+    // Monkey-patch IconGridLayout.getDropTarget to prevent the
+    // "this._pages[page] is undefined" crash that floods the log
+    // (~100+ errors per session) when dragging icons in app-grid
+    // folders.  The crash occurs when the computed page index is
+    // out of bounds — we catch it and return a safe fallback.
+    try {
+        const _origGetDropTarget =
+            IconGrid.IconGridLayout.prototype.getDropTarget;
+        IconGrid.IconGridLayout.prototype.getDropTarget = function (...args) {
+            try {
+                return _origGetDropTarget.apply(this, args);
+            } catch (e) {
+                // Swallow only the known _pages[page] crash;
+                // re-throw anything unexpected.
+                if (e instanceof TypeError &&
+                    String(e).includes('_pages['))
+                    return [0, 0];
+                throw e;
+            }
+        };
+    } catch (e) {
+        console.warn(`IconGrid getDropTarget patch failed: ${e}`);
+    }
 
     new PointerA11yTimeout.PointerA11yTimeout();
 

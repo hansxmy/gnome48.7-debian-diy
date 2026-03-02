@@ -48,33 +48,17 @@ const SniTrayIcon = GObject.registerClass({
     /**
      * Override PanelMenu.Button's default click handler.
      *
-     * If the SNI item declares itemIsMenu=false (e.g. Telegram), left click
-     * calls Activate() to raise the app window; otherwise toggles the menu.
-     * Right click and middle click always toggle the dbusmenu.
+     * Always toggle the dbusmenu on any click (left, right, middle) and
+     * touch events.  On touchscreen-only devices like Surface GO1, touch
+     * maps to left click — the previous logic that called Activate() on
+     * left click made it impossible for touch users to reach the menu.
+     * Unifying all input to menu-toggle gives a consistent experience.
      */
     vfunc_event(event) {
         const type = event.type();
         if (type !== Clutter.EventType.BUTTON_PRESS &&
             type !== Clutter.EventType.TOUCH_BEGIN)
             return Clutter.EVENT_PROPAGATE;
-
-        const button = type === Clutter.EventType.TOUCH_BEGIN
-            ? Clutter.BUTTON_PRIMARY
-            : event.get_button();
-
-        // Left click: respect itemIsMenu — some apps want Activate on left click
-        if (button === Clutter.BUTTON_PRIMARY &&
-            this._item && !this._item.itemIsMenu) {
-            try {
-                const [x, y] = event.get_coords();
-                this._item.activate(Math.round(x), Math.round(y));
-            } catch (_e) {
-                // Activate failed (app doesn't support it), fall back to menu
-                if (this.menu)
-                    this.menu.toggle();
-            }
-            return Clutter.EVENT_STOP;
-        }
 
         if (this.menu)
             this.menu.toggle();

@@ -372,6 +372,13 @@ export class Overview extends Signals.EventEmitter {
             this._persistentDashIdleId = 0;
         }
 
+        // Hide and make non-reactive BEFORE removing from the actor tree.
+        // This prevents dnd.js _pickTargetActor from following a
+        // destroyed actor chain and hitting "this._dragActor is null"
+        // during sleep/lock transitions (~40+ errors per cycle).
+        this._persistentDashContainer.reactive = false;
+        this._persistentDashContainer.visible = false;
+
         if (this._persistentDash?.get_parent() === this._persistentDashContainer)
             this._persistentDashContainer.remove_child(this._persistentDash);
 

@@ -17,7 +17,7 @@ import * as WindowManager from './windowManager.js';
 import * as WorkspaceThumbnail from './workspaceThumbnail.js';
 import * as WorkspacesView from './workspacesView.js';
 
-export const SMALL_WORKSPACE_RATIO = 0.364;
+export const SMALL_WORKSPACE_RATIO = 0.15;
 const DASH_MAX_HEIGHT_RATIO = 0.128;
 const VERTICAL_SPACING_RATIO = 0.02;
 const THUMBNAILS_SPACING_ADJUSTMENT_TOP = 0.6;
