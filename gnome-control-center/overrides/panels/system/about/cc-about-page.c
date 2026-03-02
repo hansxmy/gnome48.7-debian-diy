@@ -138,17 +138,17 @@ on_log_save_finished (GObject      *source,
         }
 
       g_autofree char *body = g_strdup_printf (
-          "收集日志失败: %s", error->message);
-      dialog = adw_alert_dialog_new ("错误", body);
+          _("Log collection failed: %s"), error->message);
+      dialog = adw_alert_dialog_new (_("Error"), body);
     }
   else
     {
       g_autofree char *body = g_strdup_printf (
-          "日志已保存至 ~/Downloads/%s", data->filename);
-      dialog = adw_alert_dialog_new ("日志已保存", body);
+          _("Logs saved to ~/Downloads/%s"), data->filename);
+      dialog = adw_alert_dialog_new (_("Logs Saved"), body);
     }
 
-  adw_alert_dialog_add_response (ADW_ALERT_DIALOG (dialog), "ok", "确定");
+  adw_alert_dialog_add_response (ADW_ALERT_DIALOG (dialog), "ok", _("OK"));
   adw_dialog_present (dialog, GTK_WIDGET (data->page));
   log_save_data_free (data);
 }

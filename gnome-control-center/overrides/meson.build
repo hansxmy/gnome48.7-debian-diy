@@ -242,14 +242,15 @@ cups_cflags = []
 # endif
 
 # cups headers
-check_headers = [
-  # ['HAVE_CUPS_CUPS_H', 'cups/cups.h'],
-  # ['HAVE_CUPS_PPD_H', 'cups/ppd.h']
-]
-
-foreach header: check_headers
-  assert(cc.has_header(header[1], args: cups_cflags), 'CUPS headers not found: ' + header[1])
-endforeach
+# CUPS header checks removed — Surface GO1 build disables printing panel.
+# check_headers = [
+#   ['HAVE_CUPS_CUPS_H', 'cups/cups.h'],
+#   ['HAVE_CUPS_PPD_H', 'cups/ppd.h']
+# ]
+#
+# foreach header: check_headers
+#   assert(cc.has_header(header[1], args: cups_cflags), 'CUPS headers not found: ' + header[1])
+# endforeach
 
 # config_h.set10('HAVE_CUPS_HTTPCONNECT2',
 #                cc.has_function('httpConnect2', dependencies: cups_dep),
@@ -327,7 +328,7 @@ config_h.set('HAVE_BLUETOOTH', host_is_linux_not_s390,
 config_h.set('BUILD_WACOM', false,
              description: 'Define to 1 to build the Wacom panel')
 config_h.set('HAVE_WACOM', false,
-             description: 'Define to 1 if Wacom is supportted')
+             description: 'Define to 1 if Wacom is supported')
 config_h.set('BUILD_THUNDERBOLT', host_is_linux_not_s390,
              description: 'Define to 1 to build the Thunderbolt panel')
 

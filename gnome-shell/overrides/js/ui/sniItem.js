@@ -306,8 +306,7 @@ export class SniItem {
                 new GLib.Bytes(rgba),
                 GdkPixbuf.Colorspace.RGB, true, 8, w, h, w * 4);
 
-            const result = pixbuf.save_to_bufferv('png', [], []);
-            const [success, pngData] = result;
+            const [success, pngData] = pixbuf.save_to_bufferv('png', [], []);
             if (!success || !pngData) return null;
 
             return Gio.BytesIcon.new(new GLib.Bytes(pngData));

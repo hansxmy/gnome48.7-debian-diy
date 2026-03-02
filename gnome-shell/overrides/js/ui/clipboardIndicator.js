@@ -30,7 +30,7 @@ const INDICATOR_ICON = 'edit-paste-symbolic';
 // ── Hardcoded settings (no GSettings needed) ──
 const MAX_REGISTRY_LENGTH = 20;
 const MAX_ENTRY_LENGTH    = 50;
-const MAX_CACHE_SIZE      = 20;  // MB
+const MAX_CACHE_SIZE_MB   = 20;
 const MAX_ENTRY_SIZE      = 5 * 1024 * 1024; // 5 MB per entry (runtime guard)
 const SYNC_ENABLED        = true;
 
@@ -86,7 +86,7 @@ export const ClipboardIndicator = GObject.registerClass({
 
     async _buildMenu() {
         const clipHistory = await this.registry.read(
-            MAX_REGISTRY_LENGTH, MAX_CACHE_SIZE);
+            MAX_REGISTRY_LENGTH, MAX_CACHE_SIZE_MB);
         if (this._destroyed)
             return;
 

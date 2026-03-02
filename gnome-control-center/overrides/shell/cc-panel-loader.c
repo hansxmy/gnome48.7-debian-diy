@@ -37,7 +37,6 @@ extern GType cc_background_panel_get_type (void);
 extern GType cc_bluetooth_panel_get_type (void);
 #endif /* BUILD_BLUETOOTH */
 extern GType cc_color_panel_get_type (void);
-extern GType cc_date_time_panel_get_type (void);
 extern GType cc_display_panel_get_type (void);
 extern GType cc_keyboard_panel_get_type (void);
 extern GType cc_mouse_panel_get_type (void);
@@ -130,12 +129,11 @@ typedef struct
 static CcSubpageLoaderVtable default_subpages[] =
 {
   {CC_CATEGORY_SYSTEM, "about"},
-  {CC_CATEGORY_SYSTEM, "datetime"},
   {CC_CATEGORY_SYSTEM, "region"},
   {CC_CATEGORY_SYSTEM, "users"},
 };
 static CcSubpageLoaderVtable *subpages_vtable = default_subpages;
-static gsize supages_vtable_len = G_N_ELEMENTS (default_subpages);
+static gsize subpages_vtable_len = G_N_ELEMENTS (default_subpages);
 
 static int
 parse_categories (GDesktopAppInfo *app)
@@ -263,7 +261,7 @@ cc_panel_loader_fill_model (CcShellModel *model)
       cc_shell_model_add_item (model, category, G_APP_INFO (app), panels_vtable[i].name);
     }
 
-  for (i = 0; i < supages_vtable_len; i++)
+  for (i = 0; i < subpages_vtable_len; i++)
     {
       g_autoptr(GDesktopAppInfo) app = NULL;
       g_autofree gchar *desktop_name = NULL;

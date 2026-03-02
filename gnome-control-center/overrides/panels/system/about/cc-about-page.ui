@@ -125,8 +125,8 @@
               <object class="AdwPreferencesGroup">
                 <child>
                   <object class="CcListRow">
-                    <property name="title">下载系统日志</property>
-                    <property name="subtitle">收集系统信息和日志到 ~/Downloads</property>
+                    <property name="title" translatable="yes">Download System Logs</property>
+                    <property name="subtitle" translatable="yes">Collect system info and logs to ~/Downloads</property>
                     <property name="show-arrow">True</property>
                     <signal name="activated" handler="cc_about_page_download_logs" swapped="yes"/>
                   </object>

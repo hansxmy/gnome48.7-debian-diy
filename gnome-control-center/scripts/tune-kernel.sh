@@ -126,7 +126,7 @@ if swapon --show | grep -q 'partition'; then
   SWAP_TOTAL=$(free -m | awk '/^Swap:/ {print $2}')
   SWAP_USED=$(free -m | awk '/^Swap:/ {print $3}')
   MEM_FREE=$(free -m | awk '/^Mem:/ {print $7}')  # available
-  if [ "$SWAP_USED" -gt 0 ] 2>/dev/null && [ "$MEM_FREE" -lt "$SWAP_USED" ] 2>/dev/null; then
+  if [ "${SWAP_USED:-0}" -gt 0 ] && [ "${MEM_FREE:-999999}" -lt "${SWAP_USED:-0}" ]; then
     echo "  ⚠ WARNING: ${SWAP_USED}MB swap in use but only ${MEM_FREE}MB RAM available"
     echo "  Skipping swapoff to avoid OOM. Please close applications and retry."
   else

@@ -31,7 +31,7 @@ export class ClipboardRegistry {
             return item;
         });
 
-        GLib.mkdir_with_parents(this.REGISTRY_DIR, 0o775);
+        GLib.mkdir_with_parents(this.REGISTRY_DIR, 0o700);
         const file = Gio.file_new_for_path(this.REGISTRY_PATH);
         const bytes = new GLib.Bytes(
             new TextEncoder().encode(JSON.stringify(data)));

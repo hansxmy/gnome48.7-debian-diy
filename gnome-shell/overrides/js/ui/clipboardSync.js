@@ -21,7 +21,7 @@ const BUS_NAME = 'com.mountlink.ClipboardSync';
 const OBJ_PATH = '/com/mountlink/ClipboardSync';
 const IFACE    = 'com.mountlink.ClipboardSync';
 const ACTIVE_SEND_STATES = new Set(['connected', 'listening']);
-const MAX_SYNC_SIZE = 14 * 1024 * 1024; // ~10 MB decoded
+const MAX_SYNC_SIZE = 14 * 1024 * 1024; // ~10.5 MB decoded (base64 ratio ≈ 4:3)
 
 const INTROSPECT_XML = `
 <node>

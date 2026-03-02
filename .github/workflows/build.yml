@@ -3,8 +3,11 @@ name: Build Surface GO GNOME .deb packages
 on:
   workflow_dispatch:
   push:
+    branches: [main]
     tags:
       - 'v*'
+  pull_request:
+    branches: [main]
 
 permissions:
   contents: write
@@ -24,6 +27,8 @@ jobs:
           RUN_TESTS: '0'
           LOCAL_SUFFIX: "+${{ github.ref_name }}"
         run: |
+          # Sanitize LOCAL_SUFFIX: replace Debian-illegal chars with '-'
+          export LOCAL_SUFFIX="$(echo "$LOCAL_SUFFIX" | tr -c 'a-zA-Z0-9.+~\n' '-')"
           chmod +x gnome-shell/scripts/build-deb.sh
           ./gnome-shell/scripts/build-deb.sh
 
@@ -47,6 +52,8 @@ jobs:
           RUN_TESTS: '0'
           LOCAL_SUFFIX: "+${{ github.ref_name }}"
         run: |
+          # Sanitize LOCAL_SUFFIX: replace Debian-illegal chars with '-'
+          export LOCAL_SUFFIX="$(echo "$LOCAL_SUFFIX" | tr -c 'a-zA-Z0-9.+~\n' '-')"
           chmod +x gnome-control-center/scripts/build.sh
           ./gnome-control-center/scripts/build.sh
 

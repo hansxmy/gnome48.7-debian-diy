@@ -521,6 +521,11 @@ export class Overview extends Signals.EventEmitter {
             GLib.Source.set_name_by_id(this._persistentDashIdleId, '[dock] persistentDashVisibility');
             return;
         } else if (!animate) {
+            if (this._persistentDashIdleId) {
+                GLib.source_remove(this._persistentDashIdleId);
+                this._persistentDashIdleId = 0;
+                this._persistentDashVisibilityQueued = false;
+            }
             this._applyPersistentDashVisibility(false);
         }
     }
