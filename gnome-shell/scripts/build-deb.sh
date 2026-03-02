@@ -197,19 +197,27 @@ PYEOF
 # Patch keyboard.js: add null check for actor in maybeHandleEvent
 # 修复 keyboard.js Clutter.Actor.contains: assertion 'descendant != NULL' failed
 # get_event_actor() 挂起恢复后可能返回 null，导致 contains() 断言崩溃
-python3 - <<'EOF'
-import re
+python3 - <<'KBEOF'
+import sys
 path = 'js/ui/keyboard.js'
-content = open(path).read()
+try:
+    content = open(path).read()
+except FileNotFoundError:
+    print(f'keyboard.js: {path} not found — skipping (non-fatal)', file=sys.stderr)
+    sys.exit(0)
+
 target = '        const actor = global.stage.get_event_actor(event);'
 guard  = '        if (!actor)\n            return false;\n'
 if target in content and guard not in content:
     content = content.replace(target, target + '\n' + guard, 1)
     open(path, 'w').write(content)
     print('keyboard.js: null actor guard applied')
-else:
-    print('keyboard.js: patch already applied or target not found')
-EOF
+elif guard in content:
+    print('keyboard.js: patch already applied')
+elif target not in content:
+    # Target line changed in newer GNOME versions — warn but don't fail build
+    print('keyboard.js: target pattern not found — patch skipped (upstream may have changed)', file=sys.stderr)
+KBEOF
 
 export DEBEMAIL="${DEBEMAIL:-dock-builder@example.invalid}"
 export DEBFULLNAME="${DEBFULLNAME:-Dock Builder}"

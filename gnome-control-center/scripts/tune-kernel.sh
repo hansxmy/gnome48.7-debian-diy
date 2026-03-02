@@ -121,15 +121,25 @@ fi
 # 如果系统存在 swap 分区，关掉它（保留 zram）
 if swapon --show | grep -q 'partition'; then
   echo "  检测到 swap 分区，正在关闭..."
-  # 仅关闭非 zram 的 swap 设备，保留 zram 运行
-  swapon --show=NAME,TYPE --noheadings | while read -r name type; do
-    if [ "$type" != "partition" ]; then continue; fi
-    swapoff "$name" && echo "  已关闭: $name" || echo "  关闭失败: $name"
-  done
-  # 注释掉 fstab 中的 swap 行防止重启恢复
-  cp /etc/fstab /etc/fstab.bak.$(date +%s)
-  sed -i '/^[^#].*\sswap\s/s/^/#/' /etc/fstab
-  echo "  swap 分区已关闭，fstab 已注释（备份: /etc/fstab.bak.*）"
+
+  # Safety: check if swap usage is too high to safely disable
+  SWAP_TOTAL=$(free -m | awk '/^Swap:/ {print $2}')
+  SWAP_USED=$(free -m | awk '/^Swap:/ {print $3}')
+  MEM_FREE=$(free -m | awk '/^Mem:/ {print $7}')  # available
+  if [ "$SWAP_USED" -gt 0 ] 2>/dev/null && [ "$MEM_FREE" -lt "$SWAP_USED" ] 2>/dev/null; then
+    echo "  ⚠ WARNING: ${SWAP_USED}MB swap in use but only ${MEM_FREE}MB RAM available"
+    echo "  Skipping swapoff to avoid OOM. Please close applications and retry."
+  else
+    # 仅关闭非 zram 的 swap 设备，保留 zram 运行
+    swapon --show=NAME,TYPE --noheadings | while read -r name type; do
+      if [ "$type" != "partition" ]; then continue; fi
+      swapoff "$name" && echo "  已关闭: $name" || echo "  关闭失败: $name"
+    done
+    # 注释掉 fstab 中的 swap 行防止重启恢复
+    cp /etc/fstab /etc/fstab.bak.$(date +%s)
+    sed -i '/^[^#].*\sswap\s/s/^/#/' /etc/fstab
+    echo "  swap 分区已关闭，fstab 已注释（备份: /etc/fstab.bak.*）"
+  fi
 fi
 
 echo "  8GB RAM + 4GB zram = 等效 12GB，无需 SSD swap"

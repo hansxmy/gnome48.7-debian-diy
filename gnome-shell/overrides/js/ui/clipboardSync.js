@@ -204,6 +204,13 @@ export class ClipboardSync {
                     this.#proxy = null;
                     return;
                 }
+                // Guard: if the bus name vanished while we were creating the
+                // proxy, discard it — the name owner is gone.
+                if (!this.#proxy.get_name_owner()) {
+                    this.#proxy = null;
+                    this.#setState('disconnected');
+                    return;
+                }
 
                 this.#signalSubId = connection.signal_subscribe(
                     BUS_NAME, IFACE, 'ClipboardReceived', OBJ_PATH,

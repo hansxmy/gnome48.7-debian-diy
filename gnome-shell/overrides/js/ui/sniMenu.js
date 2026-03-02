@@ -189,8 +189,14 @@ export class SniMenuClient {
 
     /**
      * Recursively parse (ia{sv}av) node into {id, props, children}.
+     * @param {number} depth — current recursion depth (safety limit)
      */
-    #parseNode(node) {
+    #parseNode(node, depth = 0) {
+        const MAX_DEPTH = 10;
+        if (depth > MAX_DEPTH) {
+            console.warn('SniMenu: menu tree exceeds max depth', MAX_DEPTH);
+            return {id: -1, props: {}, children: []};
+        }
         const id = node.get_child_value(0).get_int32();
         const propsDict = node.get_child_value(1); // a{sv}
         const childrenArr = node.get_child_value(2); // av
@@ -217,7 +223,7 @@ export class SniMenuClient {
         const nChildren = childrenArr.n_children();
         for (let i = 0; i < nChildren; i++) {
             const cv = childrenArr.get_child_value(i).get_variant();
-            children.push(this.#parseNode(cv));
+            children.push(this.#parseNode(cv, depth + 1));
         }
 
         return {id, props, children};
@@ -230,7 +236,9 @@ export class SniMenuClient {
         this.#addChildren(rootNode.children, this.#menu);
     }
 
-    #addChildren(children, parentMenu) {
+    #addChildren(children, parentMenu, depth = 0) {
+        const MAX_DEPTH = 10;
+        if (depth > MAX_DEPTH) return;
         for (const node of children) {
             const p = node.props;
 
@@ -252,7 +260,7 @@ export class SniMenuClient {
                 if (p.enabled === false)
                     sub.setSensitive(false);
                 parentMenu.addMenuItem(sub);
-                this.#addChildren(node.children, sub.menu);
+                this.#addChildren(node.children, sub.menu, depth + 1);
                 continue;
             }
 

@@ -204,9 +204,18 @@ export class SniItem {
             (_p, res) => {
                 if (this.#destroyed) return;
                 try {
-                    const [props] = _p.call_finish(res).deep_unpack();
-                    for (const [key, value] of Object.entries(props))
-                        this.#proxy.set_cached_property(key, value);
+                    const result = _p.call_finish(res);
+                    // Iterate the a{sv} dict without deep_unpack() to preserve
+                    // GLib.Variant values — set_cached_property requires Variant,
+                    // not JS native types.
+                    const propsDict = result.get_child_value(0);
+                    const n = propsDict.n_children();
+                    for (let i = 0; i < n; i++) {
+                        const entry = propsDict.get_child_value(i);
+                        const key = entry.get_child_value(0).get_string()[0];
+                        const val = entry.get_child_value(1).get_variant();
+                        this.#proxy.set_cached_property(key, val);
+                    }
                 } catch (_e) { /* GetAll may partially fail — use stale cache */ }
 
                 const iconSigs = ['NewIcon', 'NewAttentionIcon',
@@ -273,12 +282,20 @@ export class SniItem {
             const h = best.get_child_value(1).get_int32();
             if (w <= 0 || h <= 0) return null;
 
-            const raw = best.get_child_value(2).deep_unpack(); // Uint8Array
-            if (!raw || raw.length < w * h * 4) return null;
+            // Safety: reject absurdly large pixmaps (> 256x256 = 256KB RGBA)
+            const MAX_PIXMAP_DIM = 256;
+            if (w > MAX_PIXMAP_DIM || h > MAX_PIXMAP_DIM) {
+                console.warn(`SniItem: pixmap ${w}x${h} exceeds max ${MAX_PIXMAP_DIM}, skipping`);
+                return null;
+            }
 
-            // ARGB (network byte order) → RGBA
-            const rgba = new Uint8Array(raw.length);
-            for (let j = 0; j < raw.length; j += 4) {
+            const expectedBytes = w * h * 4;
+            const raw = best.get_child_value(2).deep_unpack(); // Uint8Array
+            if (!raw || raw.length < expectedBytes) return null;
+
+            // ARGB (network byte order) → RGBA—only convert expectedBytes
+            const rgba = new Uint8Array(expectedBytes);
+            for (let j = 0; j < expectedBytes; j += 4) {
                 rgba[j]     = raw[j + 1]; // R
                 rgba[j + 1] = raw[j + 2]; // G
                 rgba[j + 2] = raw[j + 3]; // B
@@ -290,8 +307,8 @@ export class SniItem {
                 GdkPixbuf.Colorspace.RGB, true, 8, w, h, w * 4);
 
             const result = pixbuf.save_to_bufferv('png', [], []);
-            const pngData = result.find(v => v instanceof Uint8Array);
-            if (!pngData) return null;
+            const [success, pngData] = result;
+            if (!success || !pngData) return null;
 
             return Gio.BytesIcon.new(new GLib.Bytes(pngData));
         } catch (_e) {

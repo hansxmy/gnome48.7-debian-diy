@@ -56,6 +56,11 @@ if [ "${1:-}" = "--unmask" ]; then
 else
   echo "Masking unused gsd services..."
   for u in "${UNITS[@]}"; do
+    # Validate unit name format (only allow alphanumeric, dash, dot, @)
+    if ! echo "$u" | grep -qE '^[a-zA-Z0-9@._-]+\.service$|^[a-zA-Z0-9@._-]+\.target$'; then
+      echo "  [skip] $u (invalid unit name format)"
+      continue
+    fi
     ln -sfv /dev/null "$DEST/$u"
   done
   echo "Done. Masked services will not start on next login."

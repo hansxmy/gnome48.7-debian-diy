@@ -124,15 +124,22 @@ export class SniTray {
     #watcher = null;
     #icons = new Map();   // serviceId → SniTrayIcon
     #nextId = 1;
+    #destroyed = false;
 
     constructor() {
-        this.#watcher = new StatusNotifierWatcher({
-            onRegistered: (id, bus, path) => this.#addIcon(id, bus, path),
-            onUnregistered: id => this.#removeIcon(id),
-        });
+        try {
+            this.#watcher = new StatusNotifierWatcher({
+                onRegistered: (id, bus, path) => this.#addIcon(id, bus, path),
+                onUnregistered: id => this.#removeIcon(id),
+            });
+        } catch (e) {
+            console.error('SniTray: watcher initialization failed', e);
+            this.#watcher = null;
+        }
     }
 
     destroy() {
+        this.#destroyed = true;
         this.#watcher?.destroy();
         for (const icon of this.#icons.values())
             icon.destroy();
@@ -140,7 +147,7 @@ export class SniTray {
     }
 
     #addIcon(serviceId, busName, objPath) {
-        if (this.#icons.has(serviceId))
+        if (this.#destroyed || this.#icons.has(serviceId))
             return;
 
         const icon = new SniTrayIcon(busName, objPath);

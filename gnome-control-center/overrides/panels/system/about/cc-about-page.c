@@ -203,8 +203,8 @@ cc_about_page_download_logs (CcAboutPage *self)
       "dconf dump /org/gnome/shell/ 2>/dev/null; echo; "
       "echo '=== dconf (mutter) ==='; "
       "dconf dump /org/gnome/mutter/ 2>/dev/null; echo; "
-      "echo '=== 系统日志 (本次启动) ==='; "
-      "journalctl --boot --no-pager -o short-precise; "
+      "echo '=== 系统日志 (本次启动, 最近 5000 行) ==='; "
+      "journalctl --boot --no-pager -o short-precise -n 5000; "
       "} > %s 2>&1",
       quoted_path);
 

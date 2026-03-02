@@ -79,8 +79,14 @@ apply org.gnome.software first-run false
 
 echo ""
 echo "=== 收藏栏清理 ==="
-# 移除 Nautilus（重量级文件管理器），只保留轻量应用
-apply org.gnome.shell favorite-apps "['org.gnome.TextEditor.desktop', 'org.gnome.Terminal.desktop']"
+# Only set favorites if user hasn't customized them away from default.
+# Check if current favorites still contain Nautilus (GNOME default).
+_HAS_NAUTILUS=$(gsettings get org.gnome.shell favorite-apps 2>/dev/null | grep -c 'org.gnome.Nautilus' || true)
+if [ "${_HAS_NAUTILUS:-0}" -gt 0 ]; then
+  apply org.gnome.shell favorite-apps "['org.gnome.TextEditor.desktop', 'org.gnome.Terminal.desktop']"
+else
+  echo "  [skip] org.gnome.shell favorite-apps (user already customized)"
+fi
 
 echo ""
 echo "=== 文件管理器性能 ==="

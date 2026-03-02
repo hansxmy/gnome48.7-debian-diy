@@ -130,8 +130,16 @@ function _enforceSingleWorkspaceCount() {
 
     for (let i = workspaceManager.n_workspaces - 1; i >= 1; i--) {
         const workspace = workspaceManager.get_workspace_by_index(i);
-        if (workspace)
+        if (workspace) {
+            // Move any windows on this workspace to workspace 0 first
+            const windows = workspace.list_windows();
+            if (windows.length > 0) {
+                const target = workspaceManager.get_workspace_by_index(0);
+                for (const win of windows)
+                    win.change_workspace(target);
+            }
             workspaceManager.remove_workspace(workspace, global.get_current_time());
+        }
     }
 }
 

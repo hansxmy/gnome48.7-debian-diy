@@ -347,7 +347,11 @@ export class Overview extends Signals.EventEmitter {
             'size-changed', handler,
             'workspace-changed', handler,
             'notify::minimized', handler,
-            'unmanaged', () => this._trackedPersistentDashWindows.delete(metaWindow),
+            'unmanaged', () => {
+                this._trackedPersistentDashWindows.delete(metaWindow);
+                // Eagerly disconnect all handlers for this window
+                metaWindow.disconnectObject(this._persistentDashContainer);
+            },
             this._persistentDashContainer);
     }
 
@@ -514,6 +518,7 @@ export class Overview extends Signals.EventEmitter {
                 this._applyPersistentDashVisibility(true);
                 return GLib.SOURCE_REMOVE;
             });
+            GLib.Source.set_name_by_id(this._persistentDashIdleId, '[dock] persistentDashVisibility');
             return;
         } else if (!animate) {
             this._applyPersistentDashVisibility(false);

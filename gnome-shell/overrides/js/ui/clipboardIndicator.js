@@ -5,6 +5,10 @@
  * Stripped from gnome-shell-extension-clipboard-indicator: no Extension
  * API, no GSettings, no prefs UI, no locale system, no file logger.
  * All configuration is hardcoded for maximum efficiency.
+ *
+ * NOTE: UI strings are hardcoded in Chinese for this custom build.
+ * For multi-language support, replace string literals with
+ * imports.gettext.gettext() calls from GNOME Shell's gettext domain.
  */
 import Clutter from 'gi://Clutter';
 import GObject from 'gi://GObject';
@@ -27,6 +31,7 @@ const INDICATOR_ICON = 'edit-paste-symbolic';
 const MAX_REGISTRY_LENGTH = 20;
 const MAX_ENTRY_LENGTH    = 50;
 const MAX_CACHE_SIZE      = 20;  // MB
+const MAX_ENTRY_SIZE      = 5 * 1024 * 1024; // 5 MB per entry (runtime guard)
 const SYNC_ENABLED        = true;
 
 export const ClipboardIndicator = GObject.registerClass({
@@ -489,10 +494,16 @@ export const ClipboardIndicator = GObject.registerClass({
             if (this.#pendingRemoteClipboard) {
                 const {mimetype, bytes} = this.#pendingRemoteClipboard;
                 this.#pendingRemoteClipboard = null;
+                // Re-set refreshInProgress BEFORE applying remote clipboard,
+                // because set_content() synchronously triggers owner-changed →
+                // _refreshIndicator(), which must see the guard as active.
+                this.#refreshInProgress = true;
                 try {
-                    this._onRemoteClipboard(mimetype, bytes);
+                    this.#applyRemoteClipboard(mimetype, bytes);
                 } catch (e) {
                     console.error('ClipboardIndicator: pending remote:', e);
+                } finally {
+                    this.#refreshInProgress = false;
                 }
             }
             if (this.#pendingLocalRefresh) {
@@ -516,6 +527,7 @@ export const ClipboardIndicator = GObject.registerClass({
         ];
 
         let aborted = false;
+        let timeoutCount = 0;
         for (let type of mimetypes) {
             if (aborted || this._destroyed)
                 break;
@@ -527,6 +539,10 @@ export const ClipboardIndicator = GObject.registerClass({
                                 resolve(null);
                                 return;
                             }
+                            if (bytes.get_size() > MAX_ENTRY_SIZE) {
+                                resolve(null);  // Skip oversized entries
+                                return;
+                            }
                             // Workaround: GNOME mangles mimetype on 2nd+ copy
                             if (type === 'UTF8_STRING')
                                 type = 'text/plain;charset=utf-8';
@@ -535,14 +551,17 @@ export const ClipboardIndicator = GObject.registerClass({
                 }),
                 // Safety timeout: prevents #refreshInProgress stuck forever
                 new Promise(resolve => setTimeout(() => {
-                    console.warn('ClipboardIndicator: clipboard read timed out for', type);
                     aborted = true;
+                    timeoutCount++;
                     resolve(null);
                 }, 2000)),
             ]);
             if (result)
                 return result;
         }
+        // 汇总超时日志：一次性报告，避免逐 mimetype 刷屏
+        if (timeoutCount > 0)
+            log(`ClipboardIndicator: clipboard read timed out (${timeoutCount} mimetype(s), owner likely exited)`);
         return null;
     }
 

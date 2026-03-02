@@ -47,6 +47,9 @@ export class StatusNotifierWatcher {
     #onRegistered;
     #onUnregistered;
 
+    /** Maximum number of SNI items to prevent memory exhaustion from rogue clients. */
+    static MAX_ITEMS = 64;
+
     /**
      * @param {object} callbacks
      * @param {Function} callbacks.onRegistered  — (serviceId, busName, objPath)
@@ -136,6 +139,12 @@ export class StatusNotifierWatcher {
         const id = `${busName}${objPath}`;
         if (this.#items.has(id))
             return;
+
+        // Safety: prevent memory exhaustion from misbehaving SNI clients
+        if (this.#items.size >= StatusNotifierWatcher.MAX_ITEMS) {
+            console.warn(`SniWatcher: ignoring registration — max ${StatusNotifierWatcher.MAX_ITEMS} items reached`);
+            return;
+        }
 
         const watchId = Gio.bus_watch_name(
             Gio.BusType.SESSION, busName,
