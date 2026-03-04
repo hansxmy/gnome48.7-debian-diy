@@ -3,6 +3,7 @@
  * Detects terminal context to use the correct paste shortcut.
  */
 import Clutter from 'gi://Clutter';
+import GLib from 'gi://GLib';
 
 import * as Main from './main.js';
 
@@ -22,7 +23,16 @@ export class ClipboardKeyboard {
 
     destroy() {
         Main.inputMethod.disconnectObject(this);
-        this.#device.run_dispose();
+        // Release any modifier keys that may still be pressed
+        // to prevent them from getting stuck in the compositor.
+        if (this.#device) {
+            try {
+                const time = GLib.get_monotonic_time();
+                for (const key of [Clutter.KEY_Control_L, Clutter.KEY_Shift_L, Clutter.KEY_Insert])
+                    this.#device.notify_keyval(time, key, Clutter.KeyState.RELEASED);
+            } catch (_e) { /* best-effort */ }
+            this.#device.run_dispose();
+        }
         this.#device = null;
     }
 
@@ -31,14 +41,16 @@ export class ClipboardKeyboard {
     }
 
     press(key) {
-        this.#device.notify_keyval(
-            Clutter.get_current_event_time() * 1000,
-            key, Clutter.KeyState.PRESSED);
+        if (!this.#device) return;
+        const time = Clutter.get_current_event_time();
+        const timeUs = time > 0 ? time * 1000 : GLib.get_monotonic_time();
+        this.#device.notify_keyval(timeUs, key, Clutter.KeyState.PRESSED);
     }
 
     release(key) {
-        this.#device.notify_keyval(
-            Clutter.get_current_event_time() * 1000,
-            key, Clutter.KeyState.RELEASED);
+        if (!this.#device) return;
+        const time = Clutter.get_current_event_time();
+        const timeUs = time > 0 ? time * 1000 : GLib.get_monotonic_time();
+        this.#device.notify_keyval(timeUs, key, Clutter.KeyState.RELEASED);
     }
 }

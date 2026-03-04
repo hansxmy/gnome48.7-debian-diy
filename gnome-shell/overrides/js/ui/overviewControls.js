@@ -17,7 +17,7 @@ import * as WindowManager from './windowManager.js';
 import * as WorkspaceThumbnail from './workspaceThumbnail.js';
 import * as WorkspacesView from './workspacesView.js';
 
-export const SMALL_WORKSPACE_RATIO = 0.15;
+export const SMALL_WORKSPACE_RATIO = 0.364;
 const DASH_MAX_HEIGHT_RATIO = 0.128;
 const VERTICAL_SPACING_RATIO = 0.02;
 const THUMBNAILS_SPACING_ADJUSTMENT_TOP = 0.6;
@@ -51,11 +51,20 @@ class ControlsManagerLayout extends Clutter.LayoutManager {
         this._dash = dash;
 
         this._cachedWorkspaceBoxes = new Map();
+        for (const state of CONTROLS_STATES)
+            this._cachedWorkspaceBoxes.set(state, new Clutter.ActorBox());
         this._postAllocationCallbacks = [];
 
         stateAdjustment.connectObject('notify::value',
             () => this.layout_changed(), this);
 
+        // Pre-allocate reusable ActorBox instances to avoid per-frame
+        // GBoxed allocations in vfunc_allocate — critical for Pentium 4415Y.
+        this._childBox = new Clutter.ActorBox();
+        this._appDisplayBoxA = new Clutter.ActorBox();
+        this._appDisplayBoxB = new Clutter.ActorBox();
+        this._wsInterpolateBox = new Clutter.ActorBox();
+        this._appInterpolateBox = new Clutter.ActorBox();
         this._workAreaBox = new Clutter.ActorBox();
         global.display.connectObject(
             'workareas-changed', () => this._updateWorkAreaBox(),
@@ -78,25 +87,24 @@ class ControlsManagerLayout extends Clutter.LayoutManager {
         this._workAreaBox.set_size(workArea.width, workArea.height);
     }
 
-    _computeWorkspacesBoxForState(state, box, searchHeight, dashHeight, thumbnailsHeight, spacing) {
-        const workspaceBox = box.copy();
-        const [width, height] = workspaceBox.get_size();
+    _computeWorkspacesBoxForState(state, box, searchHeight, dashHeight, thumbnailsHeight, spacing, outBox) {
+        const [width, height] = box.get_size();
         const {y1: startY} = this._workAreaBox;
         const {expandFraction} = this._workspacesThumbnails;
 
         switch (state) {
         case ControlsState.HIDDEN:
-            workspaceBox.set_origin(...this._workAreaBox.get_origin());
-            workspaceBox.set_size(...this._workAreaBox.get_size());
+            outBox.set_origin(...this._workAreaBox.get_origin());
+            outBox.set_size(...this._workAreaBox.get_size());
             break;
         case ControlsState.WINDOW_PICKER:
             // Workspace fills the full available height — the dash floats on
             // top at the bottom (z-ordered above the workspace display) so
             // the overview feels larger, matching the user's preference.
-            workspaceBox.set_origin(0,
+            outBox.set_origin(0,
                 startY + searchHeight + Math.round(spacing * THUMBNAILS_SPACING_ADJUSTMENT_TOP) +
                 thumbnailsHeight + Math.round(spacing * THUMBNAILS_SPACING_ADJUSTMENT_BOTTOM) * expandFraction);
-            workspaceBox.set_size(width,
+            outBox.set_size(width,
                 height -
                 searchHeight - Math.round(spacing * THUMBNAILS_SPACING_ADJUSTMENT_TOP) -
                 thumbnailsHeight - Math.round(spacing * THUMBNAILS_SPACING_ADJUSTMENT_BOTTOM) * expandFraction);
@@ -109,38 +117,33 @@ class ControlsManagerLayout extends Clutter.LayoutManager {
             const previewWidth = Math.round(
                 Math.min(previewHeight * aspect, width * 0.85));
             const xOrigin = Math.round((width - previewWidth) / 2);
-            workspaceBox.set_origin(xOrigin, startY + searchHeight + spacing);
-            workspaceBox.set_size(previewWidth, previewHeight);
+            outBox.set_origin(xOrigin, startY + searchHeight + spacing);
+            outBox.set_size(previewWidth, previewHeight);
             break;
         }
         }
-
-        return workspaceBox;
     }
 
-    _getAppDisplayBoxForState(state, box, searchHeight, dashHeight, workspacesBox, spacing) {
+    _getAppDisplayBoxForState(state, box, searchHeight, dashHeight, workspacesBox, spacing, outBox) {
         const [width, height] = box.get_size();
         const {y1: startY} = this._workAreaBox;
-        const appDisplayBox = new Clutter.ActorBox();
 
         switch (state) {
         case ControlsState.HIDDEN:
         case ControlsState.WINDOW_PICKER:
-            appDisplayBox.set_origin(0, box.y2);
+            outBox.set_origin(0, box.y2);
             break;
         case ControlsState.APP_GRID:
-            appDisplayBox.set_origin(0,
+            outBox.set_origin(0,
                 startY + searchHeight + spacing + workspacesBox.get_height() + spacing);
             break;
         }
 
-        appDisplayBox.set_size(width,
+        outBox.set_size(width,
             height -
             searchHeight - spacing -
             workspacesBox.get_height() - spacing -
             dashHeight - spacing);
-
-        return appDisplayBox;
     }
 
     _runPostAllocation() {
@@ -162,7 +165,7 @@ class ControlsManagerLayout extends Clutter.LayoutManager {
     }
 
     vfunc_allocate(container, box) {
-        const childBox = new Clutter.ActorBox();
+        const childBox = this._childBox;
 
         const startY = this._workAreaBox.y1;
         box.y1 += startY;
@@ -180,17 +183,21 @@ class ControlsManagerLayout extends Clutter.LayoutManager {
             availableHeight -= searchHeight + spacing;
         }
 
-        // Dash — guard against disposed dash (session transitions)
+        // Dash — only compute dashHeight when the dash is parented here.
+        // When the persistent-dash feature is active (overview.js), the
+        // dash lives in a separate Chrome container, so we must NOT
+        // subtract its height from the available space for workspaces
+        // and the app grid.
         let dashHeight = 0;
-        const maxDashHeight = Math.round(box.get_height() * DASH_MAX_HEIGHT_RATIO);
-        try {
-            this._dash.setMaxSize(width, maxDashHeight);
-            [, dashHeight] = this._dash.get_preferred_height(width);
-            dashHeight = Math.min(dashHeight, maxDashHeight);
-        } catch (_e) {
-            dashHeight = 0;
-        }
         if (this._dash.get_parent() === container) {
+            const maxDashHeight = Math.round(box.get_height() * DASH_MAX_HEIGHT_RATIO);
+            try {
+                this._dash.setMaxSize(width, maxDashHeight);
+                [, dashHeight] = this._dash.get_preferred_height(width);
+                dashHeight = Math.min(dashHeight, maxDashHeight);
+            } catch (_e) {
+                dashHeight = 0;
+            }
             childBox.set_origin(0, startY + height - dashHeight);
             childBox.set_size(width, dashHeight);
             this._dash.allocate(childBox);
@@ -218,8 +225,8 @@ class ControlsManagerLayout extends Clutter.LayoutManager {
 
         // Update cached boxes
         for (const state of CONTROLS_STATES) {
-            this._cachedWorkspaceBoxes.set(
-                state, this._computeWorkspacesBoxForState(state, ...params));
+            this._computeWorkspacesBoxForState(state, ...params,
+                this._cachedWorkspaceBoxes.get(state));
         }
 
         let workspacesBox;
@@ -228,7 +235,14 @@ class ControlsManagerLayout extends Clutter.LayoutManager {
         } else {
             const initialBox = this._cachedWorkspaceBoxes.get(transitionParams.initialState);
             const finalBox = this._cachedWorkspaceBoxes.get(transitionParams.finalState);
-            workspacesBox = initialBox.interpolate(finalBox, transitionParams.progress);
+            const p = transitionParams.progress;
+            this._wsInterpolateBox.set_origin(
+                Util.lerp(initialBox.x1, finalBox.x1, p),
+                Util.lerp(initialBox.y1, finalBox.y1, p));
+            this._wsInterpolateBox.set_size(
+                Util.lerp(initialBox.get_width(), finalBox.get_width(), p),
+                Util.lerp(initialBox.get_height(), finalBox.get_height(), p));
+            workspacesBox = this._wsInterpolateBox;
         }
 
         this._workspacesDisplay.allocate(workspacesBox);
@@ -262,15 +276,22 @@ class ControlsManagerLayout extends Clutter.LayoutManager {
             params = [box, searchHeight, dashHeight, workspaceAppGridBox, spacing];
             let appDisplayBox;
             if (!transitionParams.transitioning) {
-                appDisplayBox =
-                    this._getAppDisplayBoxForState(transitionParams.currentState, ...params);
+                this._getAppDisplayBoxForState(
+                    transitionParams.currentState, ...params, this._appDisplayBoxA);
+                appDisplayBox = this._appDisplayBoxA;
             } else {
-                const initialBox =
-                    this._getAppDisplayBoxForState(transitionParams.initialState, ...params);
-                const finalBox =
-                    this._getAppDisplayBoxForState(transitionParams.finalState, ...params);
-
-                appDisplayBox = initialBox.interpolate(finalBox, transitionParams.progress);
+                this._getAppDisplayBoxForState(
+                    transitionParams.initialState, ...params, this._appDisplayBoxA);
+                this._getAppDisplayBoxForState(
+                    transitionParams.finalState, ...params, this._appDisplayBoxB);
+                const p = transitionParams.progress;
+                this._appInterpolateBox.set_origin(
+                    Util.lerp(this._appDisplayBoxA.x1, this._appDisplayBoxB.x1, p),
+                    Util.lerp(this._appDisplayBoxA.y1, this._appDisplayBoxB.y1, p));
+                this._appInterpolateBox.set_size(
+                    Util.lerp(this._appDisplayBoxA.get_width(), this._appDisplayBoxB.get_width(), p),
+                    Util.lerp(this._appDisplayBoxA.get_height(), this._appDisplayBoxB.get_height(), p));
+                appDisplayBox = this._appInterpolateBox;
             }
 
             this._appDisplay.allocate(appDisplayBox);
@@ -387,10 +408,10 @@ class ControlsManager extends St.Widget {
         // Prevent search from ever activating
         this._searchController.visible = false;
 
-        Main.layoutManager.connectObject('monitors-changed', () =>
-            this._thumbnailsBox.setMonitorIndex(Main.layoutManager.primaryIndex), this);
         this._thumbnailsBox = new WorkspaceThumbnail.ThumbnailsBox(
             this._workspaceAdjustment, Main.layoutManager.primaryIndex);
+        Main.layoutManager.connectObject('monitors-changed', () =>
+            this._thumbnailsBox.setMonitorIndex(Main.layoutManager.primaryIndex), this);
         this._thumbnailsBox.connectObject('notify::should-show', () => {
             this._thumbnailsBox.show();
             this._thumbnailsBox.ease_property('expand-fraction',
@@ -823,6 +844,10 @@ class ControlsManager extends St.Widget {
         Main.wm.removeKeybinding('shift-overview-up');
         Main.wm.removeKeybinding('shift-overview-down');
 
+        // 清理 Ctrl+Alt+Tab 分组注册
+        Main.ctrlAltTabManager.removeGroup(this._appDisplay);
+        Main.ctrlAltTabManager.removeGroup(this._workspacesDisplay);
+
         delete this._appDisplay;
         if (!this._usesSharedDash)
             delete this.dash;
@@ -928,8 +953,12 @@ class ControlsManager extends St.Widget {
             this.prepareToLeaveOverview();
 
         this._ignoreShowAppsButtonToggle = true;
-        this.dash.showAppsButton.checked =
-            target === ControlsState.APP_GRID;
+        try {
+            this.dash.showAppsButton.checked =
+                target === ControlsState.APP_GRID;
+        } catch (_e) {
+            // Dash may be disposed during session transitions
+        }
         this._ignoreShowAppsButtonToggle = false;
 
         this._stateAdjustment.remove_transition('value');

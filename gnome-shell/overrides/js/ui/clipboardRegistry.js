@@ -100,7 +100,7 @@ export class ClipboardRegistry {
 
     getEntryFilename(entry) {
         return GLib.build_filenamev(
-            [this.REGISTRY_DIR, `${entry.asBytes().hash()}`]);
+            [this.REGISTRY_DIR, `${entry.getHash()}`]);
     }
 
     async getEntryAsImage(entry) {
@@ -146,14 +146,24 @@ export class ClipboardRegistry {
     clearCacheFolder() {
         try {
             const folder = Gio.file_new_for_path(this.REGISTRY_DIR);
-            const enumerator = folder.enumerate_children(
+            folder.enumerate_children_async(
                 'standard::name',
-                Gio.FileQueryInfoFlags.NOFOLLOW_SYMLINKS, null);
-            let info;
-            while ((info = enumerator.next_file(null)) != null) {
-                const child = folder.get_child(info.get_name());
-                try { child.delete(null); } catch (_e) { /* best-effort */ }
-            }
+                Gio.FileQueryInfoFlags.NOFOLLOW_SYMLINKS,
+                GLib.PRIORITY_LOW, null, (obj, res) => {
+                    try {
+                        const enumerator = obj.enumerate_children_finish(res);
+                        let info;
+                        while ((info = enumerator.next_file(null)) != null) {
+                            const child = folder.get_child(info.get_name());
+                            child.delete_async(
+                                GLib.PRIORITY_LOW, null, (f, r) => {
+                                    try { f.delete_finish(r); } catch (_e) { /* best-effort */ }
+                                });
+                        }
+                    } catch (e) {
+                        console.error('ClipboardRegistry: clear cache error', e);
+                    }
+                });
         } catch (e) {
             console.error('ClipboardRegistry: clear cache error', e);
         }
@@ -165,6 +175,7 @@ export class ClipboardEntry {
     #bytes;
     #glibBytes = null;
     #cachedString = null;
+    #cachedHash = null;
 
     static __isText(mimetype) {
         return mimetype.startsWith('text/') ||
@@ -173,6 +184,8 @@ export class ClipboardEntry {
     }
 
     static async fromJSON(json) {
+        if (!json.contents)
+            return null;
         const mimetype = json.mimetype || 'text/plain;charset=utf-8';
         let bytes;
 
@@ -208,7 +221,7 @@ export class ClipboardEntry {
         if (this.#cachedString !== null)
             return this.#cachedString;
         this.#cachedString = this.isImage()
-            ? `[Image ${this.asBytes().hash()}]`
+            ? `[Image ${this.getHash()}]`
             : new TextDecoder().decode(this.#bytes);
         return this.#cachedString;
     }
@@ -219,9 +232,14 @@ export class ClipboardEntry {
     asBytes()   { return this.#glibBytes ??= new GLib.Bytes(this.#bytes); }
     rawBytes()  { return this.#bytes; }
 
+    /** Cached hash — avoids re-computing O(n) hash on every equals() call. */
+    getHash()   { return this.#cachedHash ??= this.asBytes().hash(); }
+
     equals(other) {
+        if (this.isImage() !== other.isImage())
+            return false;
         if (this.isImage() && other.isImage()) {
-            return this.asBytes().hash() === other.asBytes().hash() &&
+            return this.getHash() === other.getHash() &&
                    this.asBytes().get_size() === other.asBytes().get_size();
         }
         return this.getStringValue() === other.getStringValue();

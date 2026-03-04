@@ -40,6 +40,13 @@ if [ "${1:-}" = "--status" ]; then
   for p in /sys/module/i915/parameters/{enable_fbc,enable_psr}; do
     [ -f "$p" ] && echo "  $(basename "$p") = $(cat "$p")"
   done
+  echo ""
+  echo "=== 触屏恢复服务 ==="
+  if systemctl is-enabled surface-touch-resume.service 2>/dev/null; then
+    echo "  surface-touch-resume.service: $(systemctl is-enabled surface-touch-resume.service 2>/dev/null)"
+  else
+    echo "  surface-touch-resume.service: 未安装"
+  fi
   exit 0
 fi
 
@@ -93,6 +100,8 @@ elif systemctl list-unit-files | grep -q 'systemd-zram-setup'; then
 else
   # 手动创建 + 持久化 systemd unit
   modprobe zram num_devices=1
+  # Reset any stale zram device to ensure clean state
+  echo 1 > /sys/block/zram0/reset 2>/dev/null || true
   echo zstd > /sys/block/zram0/comp_algorithm 2>/dev/null || echo lz4 > /sys/block/zram0/comp_algorithm 2>/dev/null || echo "  警告: zram 不支持 zstd/lz4，使用默认 lzo-rle 算法"
   echo $((4 * 1024 * 1024 * 1024)) > /sys/block/zram0/disksize
   mkswap /dev/zram0
@@ -173,6 +182,50 @@ echo "  当前 I/O 调度器: $SCHED"
 echo "  (SSD 推荐 mq-deadline 或 none，通常 Debian 默认已正确)"
 
 echo ""
+echo "=== 5. 触屏休眠恢复修复 ==="
+
+# Surface GO 1 的 SileadTouch (MSSL1680:00) 在 sleep/resume 后
+# 偶尔失联。内核 surface_aggregator 或 i2c-hid 驱动在恢复时
+# 没有正确重新初始化设备。通过 systemd service 在 resume 后
+# unbind + rebind i2c-hid 驱动来强制重新探测触屏。
+TOUCH_I2C_DEVICE=""
+for dev in /sys/bus/i2c/drivers/i2c_hid_acpi/*/name; do
+  if [ -f "$dev" ] && grep -qi 'silead\|MSSL\|1680' "$dev" 2>/dev/null; then
+    TOUCH_I2C_DEVICE=$(basename "$(dirname "$dev")")
+    break
+  fi
+done
+
+if [ -z "$TOUCH_I2C_DEVICE" ]; then
+  # Fallback: try to find any i2c-hid-acpi device (Surface GO touch)
+  for dev in /sys/bus/i2c/drivers/i2c_hid_acpi/*/; do
+    [ -d "$dev" ] && TOUCH_I2C_DEVICE=$(basename "$dev") && break
+  done
+fi
+
+if [ -n "$TOUCH_I2C_DEVICE" ]; then
+  cat > /etc/systemd/system/surface-touch-resume.service <<UNIT
+[Unit]
+Description=Rebind Surface GO touchscreen after resume
+After=suspend.target hibernate.target hybrid-sleep.target suspend-then-hibernate.target
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh -c 'echo "$TOUCH_I2C_DEVICE" > /sys/bus/i2c/drivers/i2c_hid_acpi/unbind 2>/dev/null; sleep 0.5; echo "$TOUCH_I2C_DEVICE" > /sys/bus/i2c/drivers/i2c_hid_acpi/bind 2>/dev/null; true'
+
+[Install]
+WantedBy=suspend.target hibernate.target hybrid-sleep.target suspend-then-hibernate.target
+UNIT
+  systemctl daemon-reload
+  systemctl enable surface-touch-resume.service
+  echo "  surface-touch-resume.service 已安装"
+  echo "  触屏设备: $TOUCH_I2C_DEVICE"
+  echo "  → 下次休眠恢复后将自动重新绑定触屏驱动"
+else
+  echo "  [skip] 未检测到 i2c-hid 触屏设备"
+fi
+
+echo ""
 echo "=== 完成 ==="
-echo "部分更改需要重启生效 (i915 参数)。"
+echo "部分更改需要重启生效 (i915 参数、触屏恢复服务)。"
 echo "运行 '$0 --status' 查看当前状态。"

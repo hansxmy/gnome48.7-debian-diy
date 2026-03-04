@@ -11,7 +11,7 @@ PACKAGES=(
   mutter-common
 )
 
-echo "[1/6] 基础信息..."
+echo "[1/7] 基础信息..."
 {
   echo "timestamp=$(date -Is)"
   echo "hostname=$(hostname)"
@@ -24,7 +24,7 @@ echo "[1/6] 基础信息..."
   echo "desktop=${XDG_CURRENT_DESKTOP:-unknown}"
 } > "$OUTDIR/system.txt"
 
-echo "[2/6] 包版本与候选源..."
+echo "[2/7] 包版本与候选源..."
 {
   dpkg-query -W -f='${Package}\t${Version}\n' "${PACKAGES[@]}" 2>/dev/null || true
 } > "$OUTDIR/packages.tsv"
@@ -33,7 +33,7 @@ echo "[2/6] 包版本与候选源..."
   apt-cache policy "${PACKAGES[@]}" || true
 } > "$OUTDIR/apt-policy.txt"
 
-echo "[3/6] GNOME/Mutter 关键设置..."
+echo "[3/7] GNOME/Mutter 关键设置..."
 {
   echo "dynamic-workspaces=$(gsettings get org.gnome.mutter dynamic-workspaces 2>/dev/null || echo N/A)"
   echo "num-workspaces=$(gsettings get org.gnome.desktop.wm.preferences num-workspaces 2>/dev/null || echo N/A)"
@@ -41,7 +41,7 @@ echo "[3/6] GNOME/Mutter 关键设置..."
   echo "slow-down-factor=$(gsettings get org.gnome.mutter slow-down-factor 2>/dev/null || echo N/A)"
 } > "$OUTDIR/gsettings.txt"
 
-echo "[4/6] 当前启动日志 (最近 5000 行)..."
+echo "[4/7] 当前启动日志 (最近 5000 行)..."
 # Limit each journal dump to 5000 lines to avoid filling Surface GO's 64GB eMMC.
 # A multi-day session can produce 50-200MB of unbounded journal output.
 journalctl -b --no-pager -n 5000 > "$OUTDIR/journal-boot.log" || true
@@ -49,13 +49,32 @@ journalctl -b _COMM=gnome-shell --no-pager -n 5000 > "$OUTDIR/journal-gnome-shel
 journalctl -b -u gdm --no-pager -n 5000 > "$OUTDIR/journal-gdm.log" || true
 journalctl -b -p warning..alert --no-pager -n 5000 > "$OUTDIR/journal-warn.log" || true
 
-echo "[5/6] coredump 与会话状态..."
+echo "[5/7] 组件分类日志..."
+# Extract component-specific lines from gnome-shell log for quick diagnosis.
+# Each grep is best-effort (|| true) — empty output means no related issues.
+GNOME_LOG="$OUTDIR/journal-gnome-shell.log"
+if [ -f "$GNOME_LOG" ]; then
+  grep -iE 'clipboard|ClipboardIndicator|ClipboardSync|ClipboardRegistry' \
+    "$GNOME_LOG" > "$OUTDIR/component-clipboard.log" 2>/dev/null || true
+  grep -iE 'sni|StatusNotifier|tray|SNITray|SNIItem|SNIWatcher' \
+    "$GNOME_LOG" > "$OUTDIR/component-sni-tray.log" 2>/dev/null || true
+  grep -iE 'mountlink|MountLink|lan.mouse|lan-mouse' \
+    "$GNOME_LOG" > "$OUTDIR/component-mountlink.log" 2>/dev/null || true
+  grep -iE '_pages\[|_dragActor|iconGrid|IconGrid|appDisplay|AppDisplay' \
+    "$GNOME_LOG" > "$OUTDIR/component-appgrid.log" 2>/dev/null || true
+  grep -iE 'overview|persistentDash|ControlsManager|overviewControls' \
+    "$GNOME_LOG" > "$OUTDIR/component-overview.log" 2>/dev/null || true
+  # Remove zero-length component logs to keep archive clean
+  find "$OUTDIR" -name 'component-*.log' -empty -delete 2>/dev/null || true
+fi
+
+echo "[6/7] coredump 与会话状态..."
 coredumpctl list gnome-shell --no-pager > "$OUTDIR/coredump-list.txt" || true
 if [ -n "${XDG_SESSION_ID:-}" ]; then
   loginctl session-status "$XDG_SESSION_ID" > "$OUTDIR/session-status.txt" || true
 fi
 
-echo "[6/6] 打包归档..."
+echo "[7/7] 打包归档..."
 ARCHIVE="${OUTDIR}.tar.gz"
 tar -C "$(dirname "$OUTDIR")" -czf "$ARCHIVE" "$(basename "$OUTDIR")"
 

@@ -126,6 +126,7 @@ export class Overview extends Signals.EventEmitter {
         this._persistentDashContainer = null;
         this._persistentDashShown = false;
         this._persistentDashIdleId = 0;
+        this._destroyContainerIdleId = 0;
         this._trackedPersistentDashWindows = new Set();
 
         Main.sessionMode.connect('updated', this._sessionUpdated.bind(this));
@@ -161,6 +162,13 @@ export class Overview extends Signals.EventEmitter {
     _createOverview() {
         if (this._overview)
             return;
+
+        // Independent guard: _overview is only set later in init(), so the
+        // check above may not catch a second call between constructor and
+        // init() if session mode fires 'updated' rapidly.
+        if (this._overviewCreated)
+            return;
+        this._overviewCreated = true;
 
         if (this.isDummy)
             return;
@@ -345,6 +353,10 @@ export class Overview extends Signals.EventEmitter {
 
         this._trackedPersistentDashWindows.add(metaWindow);
 
+        // Capture the container reference so the unmanaged handler always
+        // targets the correct container even after _destroyPersistentDash()
+        // has replaced this._persistentDashContainer with a new one.
+        const containerRef = this._persistentDashContainer;
         const handler = () => this._updatePersistentDashVisibility();
         metaWindow.connectObject(
             'position-changed', handler,
@@ -353,10 +365,9 @@ export class Overview extends Signals.EventEmitter {
             'notify::minimized', handler,
             'unmanaged', () => {
                 this._trackedPersistentDashWindows.delete(metaWindow);
-                // Eagerly disconnect all handlers for this window
-                metaWindow.disconnectObject(this._persistentDashContainer);
+                metaWindow.disconnectObject(containerRef);
             },
-            this._persistentDashContainer);
+            containerRef);
     }
 
     _destroyPersistentDash() {
@@ -371,6 +382,10 @@ export class Overview extends Signals.EventEmitter {
             GLib.source_remove(this._persistentDashIdleId);
             this._persistentDashIdleId = 0;
         }
+        // If a prior call left a pending deferred destroy, let it
+        // complete rather than cancelling it — the captured
+        // containerToDestroy closure needs to run removeChrome+destroy.
+        // (Cancelling would leak the old container in the Chrome layer.)
 
         // Hide and make non-reactive BEFORE removing from the actor tree.
         // This prevents dnd.js _pickTargetActor from following a
@@ -382,15 +397,26 @@ export class Overview extends Signals.EventEmitter {
         if (this._persistentDash?.get_parent() === this._persistentDashContainer)
             this._persistentDashContainer.remove_child(this._persistentDash);
 
-        Main.layoutManager.removeChrome(this._persistentDashContainer);
-        this._persistentDashContainer.destroy();
-
-        // Keep _persistentDash alive — ControlsManager still references it
+        // Defer the actual destroy to next idle cycle.  During session
+        // transitions the DnD subsystem may still hold references to
+        // actors inside the container; destroying synchronously while a
+        // drag-motion handler is on the stack causes "this._dragActor is
+        // null" errors.  Deferring to idle lets the current event
+        // dispatch finish cleanly.
+        const containerToDestroy = this._persistentDashContainer;
         this._persistentDashContainer = null;
         this._persistentDashShown = false;
         this._persistentDashVisibilityQueued = false;
         this._cachedDashRect = null;
         this._trackedPersistentDashWindows.clear();
+
+        this._destroyContainerIdleId = GLib.idle_add(
+            GLib.PRIORITY_DEFAULT_IDLE, () => {
+                this._destroyContainerIdleId = 0;
+                Main.layoutManager.removeChrome(containerToDestroy);
+                containerToDestroy.destroy();
+                return GLib.SOURCE_REMOVE;
+            });
     }
 
     _updatePersistentDashLayout() {
@@ -671,7 +697,9 @@ export class Overview extends Signals.EventEmitter {
 
         for (let i = 0; i < stack.length; i++) {
             // Use the stable sequence for an integer to use as a hash key
-            stackIndices[stack[i].get_meta_window().get_stable_sequence()] = i;
+            const metaWindow = stack[i].get_meta_window();
+            if (metaWindow)
+                stackIndices[metaWindow.get_stable_sequence()] = i;
         }
 
         this.emit('windows-restacked', stackIndices);

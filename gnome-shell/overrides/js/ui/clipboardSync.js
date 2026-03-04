@@ -158,11 +158,10 @@ export class ClipboardSync {
     #unsubSignals() {
         if (this.#signalSubId) {
             try {
-                // 使用 session bus 直接获取连接来取消订阅，
-                // 避免 #busConnection 被 #onNameVanished 置 null 后无法取消
-                const conn = this.#busConnection ??
-                    Gio.bus_get_sync(Gio.BusType.SESSION, null);
-                conn.signal_unsubscribe(this.#signalSubId);
+                // Only unsubscribe if we still have the connection;
+                // if it's null, the signal subscription is already void.
+                if (this.#busConnection)
+                    this.#busConnection.signal_unsubscribe(this.#signalSubId);
             } catch (_e) { /* already unsubscribed or bus gone */ }
             this.#signalSubId = 0;
         }
@@ -189,8 +188,11 @@ export class ClipboardSync {
             BUS_NAME, OBJ_PATH, IFACE,
             null,
             (_obj, res) => {
-                if (this.#destroyed || !this.#enabled)
+                if (this.#destroyed || !this.#enabled) {
+                    // GIO requires finish() for every async call
+                    try { Gio.DBusProxy.new_finish(res); } catch (_e) {}
                     return;
+                }
                 // Clean up subscriptions from any prior racing callback
                 this.#unsubSignals();
                 try {

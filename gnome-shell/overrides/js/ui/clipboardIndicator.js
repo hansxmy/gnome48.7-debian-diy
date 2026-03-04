@@ -125,7 +125,6 @@ export const ClipboardIndicator = GObject.registerClass({
         this.historySection = new PopupMenu.PopupMenuSection();
         this.scrollViewMenuSection = new PopupMenu.PopupMenuSection();
         this.historyScrollView = new St.ScrollView({
-            overlay_scrollbars: true,
             style: 'max-height: 350px; max-width: 300px;',
         });
         this.historyScrollView.add_child(this.historySection.actor);
@@ -237,6 +236,8 @@ export const ClipboardIndicator = GObject.registerClass({
     }
 
     #applyRemoteClipboard(mimetype, bytes) {
+        if (bytes.length > MAX_ENTRY_SIZE)
+            return;  // Reject oversized remote entries
         const entry = new ClipboardEntry(mimetype, bytes);
         this.#lastReceivedHash = entry.getStringValue();
 
@@ -342,8 +343,10 @@ export const ClipboardIndicator = GObject.registerClass({
             this.registry.getEntryAsImage(entry).then(img => {
                 if (!img || this._destroyed)
                     return;
-                if (!menuItem.get_parent())
+                if (!menuItem.get_parent()) {
+                    img.destroy();
                     return;
+                }
                 img.style =
                     'border: solid 1px white; overflow: hidden; ' +
                     'width: 1.5em; height: 1.5em; margin: 0; padding: 0;';
@@ -535,6 +538,7 @@ export const ClipboardIndicator = GObject.registerClass({
 
         let aborted = false;
         let timeoutCount = 0;
+        let currentTimeoutId = 0;
         for (let type of mimetypes) {
             if (aborted || this._destroyed)
                 break;
@@ -542,6 +546,7 @@ export const ClipboardIndicator = GObject.registerClass({
                 new Promise(resolve => {
                     this._clipboard.get_content(
                         CLIPBOARD_TYPE, type, (cb, bytes) => {
+                            clearTimeout(currentTimeoutId);
                             if (!bytes || bytes.get_size() === 0) {
                                 resolve(null);
                                 return;
@@ -557,11 +562,13 @@ export const ClipboardIndicator = GObject.registerClass({
                         });
                 }),
                 // Safety timeout: prevents #refreshInProgress stuck forever
-                new Promise(resolve => setTimeout(() => {
-                    aborted = true;
-                    timeoutCount++;
-                    resolve(null);
-                }, 2000)),
+                new Promise(resolve => {
+                    currentTimeoutId = setTimeout(() => {
+                        aborted = true;
+                        timeoutCount++;
+                        resolve(null);
+                    }, 2000);
+                }),
             ]);
             if (result)
                 return result;
@@ -584,14 +591,16 @@ export const ClipboardIndicator = GObject.registerClass({
             menuItem.entry.mimetype(),
             menuItem.entry.asBytes());
 
+        if (this._pasteKeypressTimeout)
+            clearTimeout(this._pasteKeypressTimeout);
         this._pasteKeypressTimeout = setTimeout(() => {
             if (this._destroyed)
                 return;
             if (this.keyboard.purpose === Clutter.InputContentPurpose.TERMINAL) {
                 this.keyboard.press(Clutter.KEY_Control_L);
                 this.keyboard.press(Clutter.KEY_Shift_L);
-                this.keyboard.press(Clutter.KEY_Insert);
-                this.keyboard.release(Clutter.KEY_Insert);
+                this.keyboard.press(Clutter.KEY_v);
+                this.keyboard.release(Clutter.KEY_v);
                 this.keyboard.release(Clutter.KEY_Shift_L);
                 this.keyboard.release(Clutter.KEY_Control_L);
             } else {

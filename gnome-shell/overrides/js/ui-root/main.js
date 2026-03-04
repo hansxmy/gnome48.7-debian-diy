@@ -367,7 +367,7 @@ async function _initializeUI() {
                 // re-throw anything unexpected.
                 if (e instanceof TypeError &&
                     String(e).includes('_pages['))
-                    return [0, 0];
+                    return [0, 0, 0]; // 0 === DragLocation.INVALID
                 throw e;
             }
         };
