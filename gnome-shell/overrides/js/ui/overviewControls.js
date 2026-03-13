@@ -17,8 +17,8 @@ import * as WindowManager from './windowManager.js';
 import * as WorkspaceThumbnail from './workspaceThumbnail.js';
 import * as WorkspacesView from './workspacesView.js';
 
-export const SMALL_WORKSPACE_RATIO = 0.364;
-const DASH_MAX_HEIGHT_RATIO = 0.128;
+export const SMALL_WORKSPACE_RATIO = 0.15;
+const DASH_MAX_HEIGHT_RATIO = 0.16;
 const VERTICAL_SPACING_RATIO = 0.02;
 const THUMBNAILS_SPACING_ADJUSTMENT_TOP = 0.6;
 const THUMBNAILS_SPACING_ADJUSTMENT_BOTTOM = 0.4;
@@ -109,18 +109,10 @@ class ControlsManagerLayout extends Clutter.LayoutManager {
                 searchHeight - Math.round(spacing * THUMBNAILS_SPACING_ADJUSTMENT_TOP) -
                 thumbnailsHeight - Math.round(spacing * THUMBNAILS_SPACING_ADJUSTMENT_BOTTOM) * expandFraction);
             break;
-        case ControlsState.APP_GRID: {
-            const previewHeight = Math.round(height * SMALL_WORKSPACE_RATIO);
-            const monitor = Main.layoutManager.primaryMonitor;
-            const aspect = monitor
-                ? monitor.width / monitor.height : 16 / 9;
-            const previewWidth = Math.round(
-                Math.min(previewHeight * aspect, width * 0.85));
-            const xOrigin = Math.round((width - previewWidth) / 2);
-            outBox.set_origin(xOrigin, startY + searchHeight + spacing);
-            outBox.set_size(previewWidth, previewHeight);
+        case ControlsState.APP_GRID:
+            outBox.set_origin(0, startY + searchHeight + spacing);
+            outBox.set_size(width, Math.round(height * SMALL_WORKSPACE_RATIO));
             break;
-        }
         }
     }
 
@@ -249,8 +241,8 @@ class ControlsManagerLayout extends Clutter.LayoutManager {
 
         // Corner masks for rounded workspace preview in APP_GRID
         if (this._cornerMasks) {
-            const initR = transitionParams.initialState === ControlsState.APP_GRID ? 24 : 0;
-            const finalR = transitionParams.finalState === ControlsState.APP_GRID ? 24 : 0;
+            const initR = 0;
+            const finalR = 0;
             const r = Math.round(
                 Util.lerp(initR, finalR, transitionParams.progress));
             if (r > 0) {
@@ -704,9 +696,18 @@ class ControlsManager extends St.Widget {
         const {initialState, finalState} = stateTransitionParams;
         const state = Math.max(initialState, finalState);
 
-        this._appDisplay.visible =
+        const newVisible =
             state > ControlsState.WINDOW_PICKER &&
             !this._searchController.searchActive;
+
+        // When the app grid becomes visible, re-queue its deferred
+        // redisplay work so newly installed apps always appear.
+        if (newVisible && !this._appDisplay.visible) {
+            if (this._appDisplay._redisplayWorkId != null)
+                Main.queueDeferredWork(this._appDisplay._redisplayWorkId);
+        }
+
+        this._appDisplay.visible = newVisible;
     }
 
     _update() {
@@ -727,10 +728,8 @@ class ControlsManager extends St.Widget {
         // Corner-mask overlay widgets are used instead of CSS on
         // _workspacesDisplay because clip_to_allocation + border-radius
         // does not clip child content to a rounded rectangle in St.
-        const initialRadius =
-            params.initialState === ControlsState.APP_GRID ? 24 : 0;
-        const finalRadius =
-            params.finalState === ControlsState.APP_GRID ? 24 : 0;
+        const initialRadius = 0;
+        const finalRadius = 0;
         const radius = Math.round(
             Util.lerp(initialRadius, finalRadius, params.progress));
         if (radius !== this._lastCornerRadius) {

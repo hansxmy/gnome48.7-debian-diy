@@ -28,7 +28,7 @@ export class ClipboardKeyboard {
         if (this.#device) {
             try {
                 const time = GLib.get_monotonic_time();
-                for (const key of [Clutter.KEY_Control_L, Clutter.KEY_Shift_L, Clutter.KEY_Insert])
+                for (const key of [Clutter.KEY_Control_L, Clutter.KEY_Shift_L, Clutter.KEY_Insert, Clutter.KEY_v])
                     this.#device.notify_keyval(time, key, Clutter.KeyState.RELEASED);
             } catch (_e) { /* best-effort */ }
             this.#device.run_dispose();

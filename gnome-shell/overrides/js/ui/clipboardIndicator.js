@@ -38,6 +38,7 @@ export const ClipboardIndicator = GObject.registerClass({
     GTypeName: 'ClipboardIndicator',
 }, class ClipboardIndicator extends PanelMenu.Button {
     #refreshInProgress = false;
+    #selfTriggered = false;
     #lastReceivedHash = null;
     #pendingRemoteClipboard = null;
     #pendingLocalRefresh = false;
@@ -241,7 +242,9 @@ export const ClipboardIndicator = GObject.registerClass({
         const entry = new ClipboardEntry(mimetype, bytes);
         this.#lastReceivedHash = entry.getStringValue();
 
+        this.#selfTriggered = true;
         this._clipboard.set_content(CLIPBOARD_TYPE, mimetype, entry.asBytes());
+        this.#selfTriggered = false;
 
         // Deduplicate
         for (let item of this.clipItemsRadioGroup) {
@@ -274,6 +277,7 @@ export const ClipboardIndicator = GObject.registerClass({
 
         menuItem.connect('activate', () => {
             this._selectMenuItem(menuItem);
+            this.#autoPaste();
         });
 
         menuItem.connect('key-focus-in', () => {
@@ -296,6 +300,7 @@ export const ClipboardIndicator = GObject.registerClass({
                 sym === Clutter.KEY_Return) {
                 this._selectMenuItem(menuItem);
                 this.menu.close();
+                this.#autoPaste();
                 return Clutter.EVENT_STOP;
             }
             return Clutter.EVENT_PROPAGATE;
@@ -364,10 +369,12 @@ export const ClipboardIndicator = GObject.registerClass({
                 item.setOrnament(PopupMenu.Ornament.DOT);
                 item.currentlySelected = true;
                 if (autoSet) {
+                    this.#selfTriggered = true;
                     this._clipboard.set_content(
                         CLIPBOARD_TYPE,
                         item.entry.mimetype(),
                         item.entry.asBytes());
+                    this.#selfTriggered = false;
                 }
             } else {
                 item.setOrnament(PopupMenu.Ornament.NONE);
@@ -381,8 +388,11 @@ export const ClipboardIndicator = GObject.registerClass({
         if (idx < 0)
             return;
 
-        if (menuItem.currentlySelected)
+        if (menuItem.currentlySelected) {
+            this.#selfTriggered = true;
             this._clipboard.set_text(CLIPBOARD_TYPE, '');
+            this.#selfTriggered = false;
+        }
 
         menuItem.destroy();
         this.clipItemsRadioGroup.splice(idx, 1);
@@ -398,8 +408,11 @@ export const ClipboardIndicator = GObject.registerClass({
         let removed = false;
         while (this.clipItemsRadioGroup.length > MAX_REGISTRY_LENGTH) {
             const item = this.clipItemsRadioGroup[0];
-            if (item.currentlySelected)
+            if (item.currentlySelected) {
+                this.#selfTriggered = true;
                 this._clipboard.set_text(CLIPBOARD_TYPE, '');
+                this.#selfTriggered = false;
+            }
             item.destroy();
             this.clipItemsRadioGroup.splice(0, 1);
             if (item.entry.isImage())
@@ -412,8 +425,11 @@ export const ClipboardIndicator = GObject.registerClass({
 
     _clearHistory() {
         for (const item of this.clipItemsRadioGroup) {
-            if (item.currentlySelected)
+            if (item.currentlySelected) {
+                this.#selfTriggered = true;
                 this._clipboard.set_text(CLIPBOARD_TYPE, '');
+                this.#selfTriggered = false;
+            }
             if (item.entry.isImage())
                 this.registry.deleteEntryFile(item.entry);
             item.destroy();
@@ -455,9 +471,16 @@ export const ClipboardIndicator = GObject.registerClass({
         this._selectionOwnerChangedId = this.selection.connect(
             'owner-changed',
             (sel, type, _source) => {
-                if (type === Meta.SelectionType.SELECTION_CLIPBOARD)
-                    this._refreshIndicator().catch(
-                        e => console.error('ClipboardIndicator: refresh:', e));
+                if (type !== Meta.SelectionType.SELECTION_CLIPBOARD)
+                    return;
+                // Skip self-triggered changes: set_content() synchronously
+                // emits owner-changed.  Re-reading the clipboard we just
+                // wrote is wasteful and can race with menu-close / focus
+                // changes on Wayland, producing empty reads.
+                if (this.#selfTriggered)
+                    return;
+                this._refreshIndicator().catch(
+                    e => console.error('ClipboardIndicator: refresh:', e));
             }
         );
     }
@@ -581,50 +604,74 @@ export const ClipboardIndicator = GObject.registerClass({
 
     // ──────────────────────── Paste ────────────────────────
 
-    #pasteItem(menuItem) {
-        this.menu.close();
-        const selected = this.clipItemsRadioGroup.find(
-            i => i.currentlySelected);
+    #isTerminalFocused() {
+        const win = global.display.focus_window;
+        if (!win) return false;
+        const wm = (win.get_wm_class() || '').toLowerCase();
+        return /terminal|terminator|tilix|konsole|alacritty|kitty|foot|wezterm/.test(wm);
+    }
 
-        this._clipboard.set_content(
-            CLIPBOARD_TYPE,
-            menuItem.entry.mimetype(),
-            menuItem.entry.asBytes());
+    #simulatePaste() {
+        if (this.#isTerminalFocused()) {
+            this.keyboard.press(Clutter.KEY_Control_L);
+            this.keyboard.press(Clutter.KEY_Shift_L);
+            this.keyboard.press(Clutter.KEY_v);
+            this.keyboard.release(Clutter.KEY_v);
+            this.keyboard.release(Clutter.KEY_Shift_L);
+            this.keyboard.release(Clutter.KEY_Control_L);
+        } else {
+            this.keyboard.press(Clutter.KEY_Control_L);
+            this.keyboard.press(Clutter.KEY_v);
+            this.keyboard.release(Clutter.KEY_v);
+            this.keyboard.release(Clutter.KEY_Control_L);
+        }
+    }
 
-        // Clear BOTH timeouts — a rapid second paste must cancel the
-        // prior reset callback to avoid restoring stale clipboard content.
+    /** Auto-paste after click/Enter: permanently selects the item. */
+    #autoPaste() {
         if (this._pasteResetTimeout)
             clearTimeout(this._pasteResetTimeout);
         if (this._pasteKeypressTimeout)
             clearTimeout(this._pasteKeypressTimeout);
         this._pasteKeypressTimeout = setTimeout(() => {
-            if (this._destroyed)
-                return;
-            if (this.keyboard.purpose === Clutter.InputContentPurpose.TERMINAL) {
-                this.keyboard.press(Clutter.KEY_Control_L);
-                this.keyboard.press(Clutter.KEY_Shift_L);
-                this.keyboard.press(Clutter.KEY_v);
-                this.keyboard.release(Clutter.KEY_v);
-                this.keyboard.release(Clutter.KEY_Shift_L);
-                this.keyboard.release(Clutter.KEY_Control_L);
-            } else {
-                this.keyboard.press(Clutter.KEY_Shift_L);
-                this.keyboard.press(Clutter.KEY_Insert);
-                this.keyboard.release(Clutter.KEY_Insert);
-                this.keyboard.release(Clutter.KEY_Shift_L);
-            }
+            if (this._destroyed) return;
+            this.#simulatePaste();
+        }, 250);
+    }
 
+    /** Quick-paste via 'v' key without changing selection. */
+    #pasteItem(menuItem) {
+        this.menu.close();
+        const selected = this.clipItemsRadioGroup.find(
+            i => i.currentlySelected);
+
+        this.#selfTriggered = true;
+        this._clipboard.set_content(
+            CLIPBOARD_TYPE,
+            menuItem.entry.mimetype(),
+            menuItem.entry.asBytes());
+        this.#selfTriggered = false;
+
+        if (this._pasteResetTimeout)
+            clearTimeout(this._pasteResetTimeout);
+        if (this._pasteKeypressTimeout)
+            clearTimeout(this._pasteKeypressTimeout);
+        this._pasteKeypressTimeout = setTimeout(() => {
+            if (this._destroyed) return;
+            this.#simulatePaste();
             this._pasteResetTimeout = setTimeout(() => {
-                if (this._destroyed)
-                    return;
-                if (selected?.entry) {
+                if (this._destroyed) return;
+                if (selected?.entry &&
+                    this.clipItemsRadioGroup.includes(selected)) {
+                    this.#selfTriggered = true;
                     this._clipboard.set_content(
                         CLIPBOARD_TYPE,
                         selected.entry.mimetype(),
                         selected.entry.asBytes());
+                    this.#selfTriggered = false;
                 }
-            }, 50);
-        }, 50);
+            }, 500);
+        }, 250);
     }
 
     // ──────────────────────── Cleanup ────────────────────────

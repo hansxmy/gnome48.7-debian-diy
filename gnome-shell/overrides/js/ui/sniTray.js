@@ -20,7 +20,7 @@ const SniTrayIcon = GObject.registerClass({
     GTypeName: 'SniTrayIcon',
 }, class SniTrayIcon extends PanelMenu.Button {
     _init(busName, objPath) {
-        super._init(0.0, 'SniTrayIcon');
+        super._init(0.5, 'SniTrayIcon');
         this._destroyed = false;
         this._menuClient = null;
 
