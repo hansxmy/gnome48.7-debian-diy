@@ -140,8 +140,11 @@ export class SniItem {
             iconName = this.#getString('IconName');
 
         if (iconName) {
-            if (iconName.startsWith('/'))
-                return Gio.FileIcon.new(Gio.file_new_for_path(iconName));
+            if (iconName.startsWith('/')) {
+                if (/\.(svg|png|xpm|ico)$/i.test(iconName))
+                    return Gio.FileIcon.new(Gio.file_new_for_path(iconName));
+                return null;
+            }
 
             const cleaned = iconName.replace(/\.(svg|png|xpm)$/i, '');
             const themePath = this.#getString('IconThemePath');
@@ -241,9 +244,9 @@ export class SniItem {
     }
 
     #findInThemePath(iconName, basePath) {
-        // Early exit: if basePath doesn't exist, skip all stat() calls.
-        // Saves ~11ms on Surface GO's eMMC when page cache is cold.
-        if (!GLib.file_test(basePath, GLib.FileTest.IS_DIR))
+        // Validate basePath is absolute and exists
+        if (!basePath.startsWith('/') ||
+            !GLib.file_test(basePath, GLib.FileTest.IS_DIR))
             return null;
         const exts = ['svg', 'png'];
         // Direct file in base path
@@ -272,11 +275,12 @@ export class SniItem {
         try {
             const n = variant.n_children();
             if (n === 0) return null;
+            const cap = Math.min(n, 20);
 
             // Select pixmap closest to ICON_SIZE
             let best = variant.get_child_value(0);
             let bestW = best.get_child_value(0).get_int32();
-            for (let i = 1; i < n; i++) {
+            for (let i = 1; i < cap; i++) {
                 const p = variant.get_child_value(i);
                 const w = p.get_child_value(0).get_int32();
                 if (Math.abs(w - ICON_SIZE) < Math.abs(bestW - ICON_SIZE)) {

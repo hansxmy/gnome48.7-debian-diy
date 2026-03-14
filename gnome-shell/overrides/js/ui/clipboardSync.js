@@ -266,6 +266,12 @@ export class ClipboardSync {
             if (b64data.length > MAX_SYNC_SIZE)
                 return;
             const bytes = GLib.base64_decode(b64data);
+            if (!bytes || bytes.length === 0)
+                return;
+            if (mimetype.length > 256)
+                return;
+            if (bytes.length > 5 * 1024 * 1024)
+                return;
             this.#onClipboardReceived?.(mimetype, bytes);
         } catch (e) {
             console.error('ClipboardSync: signal parse error', e);

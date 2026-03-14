@@ -15,6 +15,8 @@ export class ClipboardKeyboard {
         const seat = Clutter.get_default_backend().get_default_seat();
         this.#device = seat.create_virtual_device(
             Clutter.InputDeviceType.KEYBOARD_DEVICE);
+        if (!this.#device)
+            throw new Error('Virtual keyboard device creation returned null');
 
         Main.inputMethod.connectObject('notify::content-purpose', method => {
             this.#contentPurpose = method.content_purpose;
@@ -42,15 +44,23 @@ export class ClipboardKeyboard {
 
     press(key) {
         if (!this.#device) return;
-        const time = Clutter.get_current_event_time();
-        const timeUs = time > 0 ? time * 1000 : GLib.get_monotonic_time();
-        this.#device.notify_keyval(timeUs, key, Clutter.KeyState.PRESSED);
+        try {
+            const time = Clutter.get_current_event_time();
+            const timeUs = time > 0 ? time * 1000 : GLib.get_monotonic_time();
+            this.#device.notify_keyval(timeUs, key, Clutter.KeyState.PRESSED);
+        } catch (e) {
+            console.error('ClipboardKeyboard.press:', e);
+        }
     }
 
     release(key) {
         if (!this.#device) return;
-        const time = Clutter.get_current_event_time();
-        const timeUs = time > 0 ? time * 1000 : GLib.get_monotonic_time();
-        this.#device.notify_keyval(timeUs, key, Clutter.KeyState.RELEASED);
+        try {
+            const time = Clutter.get_current_event_time();
+            const timeUs = time > 0 ? time * 1000 : GLib.get_monotonic_time();
+            this.#device.notify_keyval(timeUs, key, Clutter.KeyState.RELEASED);
+        } catch (e) {
+            console.error('ClipboardKeyboard.release:', e);
+        }
     }
 }

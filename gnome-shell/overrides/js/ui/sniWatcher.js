@@ -106,6 +106,11 @@ export class StatusNotifierWatcher {
     }
 
     #handleMethod(method, params, invocation) {
+        if (this.#destroyed) {
+            invocation.return_dbus_error(
+                'org.freedesktop.DBus.Error.Failed', 'Watcher destroyed');
+            return;
+        }
         if (method === 'RegisterStatusNotifierItem') {
             const sender = invocation.get_sender();
             const [service] = params.deep_unpack();

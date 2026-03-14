@@ -213,8 +213,14 @@ export class ClipboardEntry {
             // Validate that cached image path is within the expected
             // cache directory to prevent loading arbitrary files from
             // a tampered registry.
-            if (registryDir && !filename.startsWith(registryDir + '/'))
-                return null;
+            if (registryDir) {
+                if (!filename.startsWith('/'))
+                    return null;
+                const resolved = GLib.canonicalize_filename(filename, null);
+                const resolvedDir = GLib.canonicalize_filename(registryDir, null);
+                if (!resolved.startsWith(resolvedDir + '/'))
+                    return null;
+            }
             if (!GLib.file_test(filename, GLib.FileTest.EXISTS))
                 return null;
 

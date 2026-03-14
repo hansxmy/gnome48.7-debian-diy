@@ -205,10 +205,14 @@ class ControlsManagerLayout extends Clutter.LayoutManager {
         } else {
             // Persistent dash: query its height for layout calculations
             // without allocating (it's managed by the Chrome layer).
-            const maxDashHeight = Math.round(box.get_height() * DASH_MAX_HEIGHT_RATIO);
+            // Do NOT call setMaxSize here — the persistent dash already
+            // has its own size constraints set by overview.js.  Calling
+            // setMaxSize with a different DASH_MAX_HEIGHT_RATIO would
+            // resize the dash every time the overview allocates, causing
+            // the dock bar to change size between desktop and overview.
             try {
-                this._dash.setMaxSize(width, maxDashHeight);
                 [, dashHeight] = this._dash.get_preferred_height(width);
+                const maxDashHeight = Math.round(box.get_height() * DASH_MAX_HEIGHT_RATIO);
                 dashHeight = Math.min(dashHeight, maxDashHeight);
             } catch (_e) {
                 dashHeight = 0;
@@ -261,10 +265,12 @@ class ControlsManagerLayout extends Clutter.LayoutManager {
 
         // Corner masks for rounded workspace preview in APP_GRID
         if (this._cornerMasks) {
-            const initR = 0;
-            const finalR = 24;
+            const radiusForState = s => s === ControlsState.APP_GRID ? 24 : 0;
             const r = Math.round(
-                Util.lerp(initR, finalR, transitionParams.progress));
+                Util.lerp(
+                    radiusForState(transitionParams.initialState),
+                    radiusForState(transitionParams.finalState),
+                    transitionParams.progress));
             if (r > 0) {
                 const wx = workspacesBox.x1;
                 const wy = workspacesBox.y1;
@@ -706,6 +712,7 @@ class ControlsManager extends St.Widget {
             params.translation_y = translationY;
         }
 
+        this._thumbnailsBox.remove_all_transitions();
         this._thumbnailsBox.ease(params);
     }
 
@@ -748,10 +755,11 @@ class ControlsManager extends St.Widget {
         // Corner-mask overlay widgets are used instead of CSS on
         // _workspacesDisplay because clip_to_allocation + border-radius
         // does not clip child content to a rounded rectangle in St.
-        const initialRadius = 0;
-        const finalRadius = 24;
-        const radius = Math.round(
-            Util.lerp(initialRadius, finalRadius, params.progress));
+        const radiusForState = s => s === ControlsState.APP_GRID ? 24 : 0;
+        const radius = Math.round(Util.lerp(
+            radiusForState(params.initialState),
+            radiusForState(params.finalState),
+            params.progress));
         if (radius !== this._lastCornerRadius) {
             this._lastCornerRadius = radius;
             if (radius > 0) {
