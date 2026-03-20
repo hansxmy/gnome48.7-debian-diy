@@ -104,7 +104,7 @@ jobs:
 
           fetch_src() {
             local ver="$1" dest="$2"
-            echo "  下载 gnome-shell_${ver} ..."
+            echo "  下载 gnome-shell_${ver} ..." >&2
             mkdir -p "$dest"
             ( cd "$dest" && dget -u "$POOL/gnome-shell_${ver}.dsc" ) >&2
             local dir
