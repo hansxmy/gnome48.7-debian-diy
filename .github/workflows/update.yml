@@ -1,10 +1,25 @@
 name: Update gnome-shell upstream
 
+# ════════════════════════════════════════════════════════════════
+#  工作原理:
+#    upstream-base/ 目录保存当前 override 文件对应的上游原始版本。
+#    当 Debian trixie 发布新版 gnome-shell 时:
+#    1. 只下载新版上游源码
+#    2. BASE = upstream-base/ (已提交到仓库，不需要下载旧版)
+#       OURS = overrides/ (我们的全部定制)
+#       THEIRS = 新版上游源码
+#    3. git merge-file 三方合并: 保留我们的改动 + 合入上游修复
+#    4. 更新 upstream-base/ 为新版 → 为下次更新做好准备
+#
+#  首次运行 (无 upstream-base/):
+#    下载当前版本源码，初始化 upstream-base/，不做合并。
+# ════════════════════════════════════════════════════════════════
+
 on:
   workflow_dispatch:
     inputs:
       new_version:
-        description: '目标版本号 (留空=自动检测)'
+        description: '目标版本 (留空=自动检测 trixie 最新)'
         required: false
         type: string
 
@@ -22,8 +37,7 @@ jobs:
         run: |
           apt-get update -qq
           apt-get install -y --no-install-recommends \
-            ca-certificates wget git devscripts dpkg-dev \
-            grep sed coreutils diffutils
+            ca-certificates wget git devscripts dpkg-dev
 
       - name: Checkout
         uses: actions/checkout@v4
@@ -31,154 +45,258 @@ jobs:
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Detect versions
-        id: ver
+      - name: Plan
+        id: plan
         run: |
-          # 从 build-deb.sh 解析当前版本
-          CURRENT=$(grep -oP 'gnome-shell_\K[^"'\'']+(?=\.dsc)' \
-            gnome-shell/scripts/build-deb.sh | head -1)
-          echo "current=$CURRENT" >> "$GITHUB_OUTPUT"
-          echo "当前版本: $CURRENT"
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
-          # 目标版本: 手动输入 > apt 自动检测
+          # 从 build-deb.sh 的 DSC URL 解析当前上游版本
+          CURRENT=$(grep -oP 'gnome-shell_\K[^"'"'"']+(?=\.dsc)' \
+            gnome-shell/scripts/build-deb.sh | head -1)
+          [ -n "$CURRENT" ] || { echo "::error::无法解析 build-deb.sh 中的版本"; exit 1; }
+          echo "current=$CURRENT" >> "$GITHUB_OUTPUT"
+
           if [ -n "${{ inputs.new_version }}" ]; then
             NEW="${{ inputs.new_version }}"
           else
-            apt-get update -qq
-            NEW=$(apt-cache policy gnome-shell \
-              | grep -oP 'Candidate:\s*\K\S+')
+            NEW=$(apt-cache policy gnome-shell | sed -n 's/.*Candidate: *//p' | tr -d ' ')
+            [ -n "$NEW" ] || { echo "::error::无法检测 trixie 最新版本"; exit 1; }
           fi
           echo "new=$NEW" >> "$GITHUB_OUTPUT"
-          echo "目标版本: $NEW"
 
-          if [ "$CURRENT" = "$NEW" ]; then
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-            echo "✓ 已是最新版本，无需更新"
+          HAS_BASE=false
+          [ -f gnome-shell/upstream-base/.version ] && HAS_BASE=true
+
+          echo "══════════════════════════════"
+          echo "  build-deb.sh: $CURRENT"
+          echo "  trixie 最新:  $NEW"
+          echo "  基线缓存:     $HAS_BASE"
+          echo "══════════════════════════════"
+
+          if [ "$CURRENT" = "$NEW" ] && $HAS_BASE; then
+            echo "action=skip" >> "$GITHUB_OUTPUT"
+            echo "✓ 已是最新且基线已就绪"
+          elif ! $HAS_BASE; then
+            # 无基线 → 必须初始化 (同时可能有新版本)
+            if [ "$CURRENT" = "$NEW" ]; then
+              echo "action=init" >> "$GITHUB_OUTPUT"
+              echo "⚙ 初始化基线 ($CURRENT)"
+            else
+              echo "action=init-and-merge" >> "$GITHUB_OUTPUT"
+              echo "⚡ 初始化基线 + 合并 $CURRENT → $NEW"
+            fi
           else
-            echo "skip=false" >> "$GITHUB_OUTPUT"
+            echo "action=merge" >> "$GITHUB_OUTPUT"
+            echo "⚡ 合并 $CURRENT → $NEW"
           fi
 
-      - name: Download old upstream source (BASE)
-        if: steps.ver.outputs.skip == 'false'
+      # ── 下载源码 ──
+      # init:           只需当前版本 (创建基线)
+      # init-and-merge: 当前版本 (基线) + 新版本 (合并)
+      # merge:          只需新版本 (基线已在仓库)
+      - name: Download sources
+        if: steps.plan.outputs.action != 'skip'
         run: |
-          VER="${{ steps.ver.outputs.current }}"
           POOL="https://deb.debian.org/debian/pool/main/g/gnome-shell"
-          mkdir -p /tmp/old && cd /tmp/old
-          dget -u "$POOL/gnome-shell_${VER}.dsc"
-          echo "OLD_SRC=$(find /tmp/old -maxdepth 1 -type d -name 'gnome-shell-*' | head -1)" >> "$GITHUB_ENV"
+          ACTION="${{ steps.plan.outputs.action }}"
+          CURRENT="${{ steps.plan.outputs.current }}"
+          NEW="${{ steps.plan.outputs.new }}"
 
-      - name: Download new upstream source (THEIRS)
-        if: steps.ver.outputs.skip == 'false'
-        run: |
-          VER="${{ steps.ver.outputs.new }}"
-          POOL="https://deb.debian.org/debian/pool/main/g/gnome-shell"
-          mkdir -p /tmp/new && cd /tmp/new
-          dget -u "$POOL/gnome-shell_${VER}.dsc"
-          echo "NEW_SRC=$(find /tmp/new -maxdepth 1 -type d -name 'gnome-shell-*' | head -1)" >> "$GITHUB_ENV"
+          fetch_src() {
+            local ver="$1" dest="$2"
+            echo "  下载 gnome-shell_${ver} ..."
+            mkdir -p "$dest"
+            ( cd "$dest" && dget -u "$POOL/gnome-shell_${ver}.dsc" ) >&2
+            local dir
+            dir=$(find "$dest" -maxdepth 1 -type d -name 'gnome-shell-*' | head -1)
+            [ -n "$dir" ] || { echo "::error::gnome-shell_${ver} 解包失败"; exit 1; }
+            echo "$dir"
+          }
 
-      - name: Three-way merge overlays
-        if: steps.ver.outputs.skip == 'false'
+          if [ "$ACTION" = "init" ]; then
+            SRC=$(fetch_src "$CURRENT" /tmp/src-current)
+            echo "SRC_CURRENT=$SRC" >> "$GITHUB_ENV"
+
+          elif [ "$ACTION" = "init-and-merge" ]; then
+            SRC=$(fetch_src "$CURRENT" /tmp/src-current)
+            echo "SRC_CURRENT=$SRC" >> "$GITHUB_ENV"
+            SRC=$(fetch_src "$NEW" /tmp/src-new)
+            echo "SRC_NEW=$SRC" >> "$GITHUB_ENV"
+
+          elif [ "$ACTION" = "merge" ]; then
+            SRC=$(fetch_src "$NEW" /tmp/src-new)
+            echo "SRC_NEW=$SRC" >> "$GITHUB_ENV"
+          fi
+
+      # ── init: 从上游源码提取基线文件 ──
+      - name: Init baseline
+        if: steps.plan.outputs.action == 'init' || steps.plan.outputs.action == 'init-and-merge'
         run: |
+          BASE_DIR="gnome-shell/upstream-base"
           OVERLAY_DIR="gnome-shell/overrides"
-          CURRENT="${{ steps.ver.outputs.current }}"
-          NEW="${{ steps.ver.outputs.new }}"
+          VER="${{ steps.plan.outputs.current }}"
 
-          # overlay → 上游源码中的路径映射
-          # js/ui/*.js  → js/ui/*.js (同名)
-          # js/ui-root/*.js → js/ui/*.js (重定向)
+          rm -rf "$BASE_DIR"
+          mkdir -p "$BASE_DIR/js/ui"
+
+          # 对每个 overlay 文件，如果上游也有同名文件则保存为基线
+          # clipboard*/sni* 是我们新增的文件，上游没有 → 不会产生基线 → 合并时自动跳过
+          for f in "$OVERLAY_DIR"/js/ui/*.js "$OVERLAY_DIR"/js/ui-root/*.js; do
+            [ -f "$f" ] || continue
+            b=$(basename "$f")
+            src="$SRC_CURRENT/js/ui/$b"
+            if [ -f "$src" ]; then
+              cp "$src" "$BASE_DIR/js/ui/$b"
+              echo "  ✓ $b"
+            else
+              echo "  ⊘ $b — 上游无此文件（新增文件，无需基线）"
+            fi
+          done
+
+          echo "$VER" > "$BASE_DIR/.version"
+          echo ""
+          echo "基线文件:"
+          ls "$BASE_DIR/js/ui/" 2>/dev/null || echo "  (无)"
+
+      # ── 三方合并 ──
+      - name: Three-way merge
+        if: steps.plan.outputs.action == 'merge' || steps.plan.outputs.action == 'init-and-merge'
+        run: |
+          BASE_DIR="gnome-shell/upstream-base"
+          OVERLAY_DIR="gnome-shell/overrides"
+          CURRENT="${{ steps.plan.outputs.current }}"
+          NEW="${{ steps.plan.outputs.new }}"
+
+          [ -f "$BASE_DIR/.version" ] || { echo "::error::基线缺失"; exit 1; }
 
           UNCHANGED=0; MERGED=0; CONFLICT=0; SKIPPED=0
 
-          merge_file() {
+          do_merge() {
             local ov_rel="$1" src_rel="$2"
-            local our="$OVERLAY_DIR/$ov_rel"
-            local base="$OLD_SRC/$src_rel"
-            local theirs="$NEW_SRC/$src_rel"
+            local ours="$OVERLAY_DIR/$ov_rel"
+            local base="$BASE_DIR/$src_rel"
+            local theirs="$SRC_NEW/$src_rel"
 
-            # 三个文件必须都存在
-            for p in "$our" "$base" "$theirs"; do
-              [ -f "$p" ] || { echo "  ⊘ $ov_rel — 缺失，跳过"; ((SKIPPED++)); return; }
-            done
+            # 三个文件必须都存在才能三方合并
+            # clipboard*/sni* 没有基线 → 自动跳过（正确：它们是纯新增文件）
+            [ -f "$ours" ]   || { echo "  ⊘ $ov_rel — overlay 不存在"; SKIPPED=$((SKIPPED+1)); return 0; }
+            [ -f "$base" ]   || { echo "  ⊘ $ov_rel — 无基线（新增文件，跳过）"; SKIPPED=$((SKIPPED+1)); return 0; }
+            [ -f "$theirs" ] || { echo "  ⊘ $ov_rel — 新版上游已删除此文件"; SKIPPED=$((SKIPPED+1)); return 0; }
 
-            # 上游无变化 → 跳过
+            # 上游在此文件上没有变化
             if diff -q "$base" "$theirs" >/dev/null 2>&1; then
               echo "  ✓ $ov_rel — 上游无变化"
-              ((UNCHANGED++))
-              return
+              UNCHANGED=$((UNCHANGED+1))
+              return 0
             fi
 
-            echo "  ⚡ $ov_rel — 上游有变化，合并 ..."
+            echo "  ⚡ $ov_rel — 上游有变化，三方合并 ..."
+            local tmp="/tmp/_merge_result"
             if git merge-file -p \
-                 -L "OURS($ov_rel)" \
-                 -L "BASE(upstream $CURRENT)" \
-                 -L "THEIRS(upstream $NEW)" \
-                 "$our" "$base" "$theirs" > /tmp/merge_result 2>/dev/null
+                 -L "OURS:$ov_rel" \
+                 -L "BASE:upstream-$CURRENT" \
+                 -L "THEIRS:upstream-$NEW" \
+                 "$ours" "$base" "$theirs" > "$tmp" 2>/dev/null
             then
-              cp /tmp/merge_result "$our"
-              echo "    ✓ 自动合并成功"
-              ((MERGED++))
+              cp "$tmp" "$ours"
+              echo "    ✓ 自动合并成功（我们的改动完整保留 + 上游修复已合入）"
+              MERGED=$((MERGED+1))
             else
-              rc=$?
+              local rc=$?
               if [ "$rc" -lt 128 ]; then
-                cp /tmp/merge_result "$our"
-                n=$(grep -c '^<<<<<<<' /tmp/merge_result 2>/dev/null || echo 0)
-                echo "    ✗ $n 处冲突 — 需手动解决"
-                ((CONFLICT++))
+                cp "$tmp" "$ours"
+                local n
+                n=$(grep -c '^<<<<<<<' "$tmp" 2>/dev/null || echo 0)
+                echo "    ✗ ${n} 处冲突（上游和我们改了同一行）"
+                CONFLICT=$((CONFLICT+1))
               else
-                echo "    ✗ merge 出错 (rc=$rc)，保留原文件"
-                ((SKIPPED++))
+                echo "    ✗ merge-file 错误 (rc=$rc)"
+                SKIPPED=$((SKIPPED+1))
               fi
             fi
+            rm -f "$tmp"
           }
 
-          # js/ui/ 下的同名覆盖文件
+          echo "═══ 三方合并 overlay 文件 ═══"
+          # js/ui/ 同名文件
           for f in "$OVERLAY_DIR"/js/ui/*.js; do
             [ -f "$f" ] || continue
             b=$(basename "$f")
-            merge_file "js/ui/$b" "js/ui/$b"
+            do_merge "js/ui/$b" "js/ui/$b"
           done
-
-          # js/ui-root/ 下映射到 js/ui/ 的文件
+          # js/ui-root/ → js/ui/ 映射
           for f in "$OVERLAY_DIR"/js/ui-root/*.js; do
             [ -f "$f" ] || continue
             b=$(basename "$f")
-            merge_file "js/ui-root/$b" "js/ui/$b"
+            do_merge "js/ui-root/$b" "js/ui/$b"
           done
 
           echo ""
           echo "═══════════════════════════════════════"
-          echo "  版本:       $CURRENT → $NEW"
+          printf "  版本:       %s → %s\n" "$CURRENT" "$NEW"
           echo "  上游无变化: $UNCHANGED"
           echo "  自动合并:   $MERGED"
           echo "  有冲突:     $CONFLICT"
-          echo "  跳过:       $SKIPPED"
+          echo "  跳过:       $SKIPPED (新增文件，不受上游更新影响)"
           echo "═══════════════════════════════════════"
 
           if [ "$CONFLICT" -gt 0 ]; then
-            echo "::error::有 $CONFLICT 个文件存在合并冲突，CI 失败"
+            echo "::error::$CONFLICT 个文件存在合并冲突，CI 失败。请手动解决后提交。"
             exit 1
           fi
 
-          if [ "$MERGED" -eq 0 ]; then
-            echo "上游虽有新版本，但涉及的文件均无变化，仅更新 DSC URL"
-          fi
-
-      - name: Update build-deb.sh version
-        if: steps.ver.outputs.skip == 'false'
+      # ── 更新基线 & 版本号 ──
+      - name: Update baseline & version
+        if: steps.plan.outputs.action == 'merge' || steps.plan.outputs.action == 'init-and-merge'
         run: |
-          CURRENT="${{ steps.ver.outputs.current }}"
-          NEW="${{ steps.ver.outputs.new }}"
-          sed -i "s|gnome-shell_${CURRENT}\.dsc|gnome-shell_${NEW}.dsc|g" \
-            gnome-shell/scripts/build-deb.sh
+          BASE_DIR="gnome-shell/upstream-base"
+          OVERLAY_DIR="gnome-shell/overrides"
+          NEW="${{ steps.plan.outputs.new }}"
+          CURRENT="${{ steps.plan.outputs.current }}"
+
+          # 用新版上游文件刷新基线
+          mkdir -p "$BASE_DIR/js/ui"
+          for f in "$OVERLAY_DIR"/js/ui/*.js "$OVERLAY_DIR"/js/ui-root/*.js; do
+            [ -f "$f" ] || continue
+            b=$(basename "$f")
+            src="$SRC_NEW/js/ui/$b"
+            [ -f "$src" ] && cp "$src" "$BASE_DIR/js/ui/$b"
+          done
+          echo "$NEW" > "$BASE_DIR/.version"
+
+          # 更新 build-deb.sh 中的 DSC URL
+          # 用 python3 避免 sed 正则转义问题 (版本号含 + . 等特殊字符)
+          python3 -c "
+          import sys
+          p = 'gnome-shell/scripts/build-deb.sh'
+          c = open(p).read()
+          c = c.replace('gnome-shell_' + sys.argv[1] + '.dsc',
+                         'gnome-shell_' + sys.argv[2] + '.dsc')
+          open(p, 'w').write(c)
+          " "$CURRENT" "$NEW"
+
           echo "✓ build-deb.sh: $CURRENT → $NEW"
+          echo "✓ 基线已更新至 $NEW"
 
-      - name: Commit and push
-        if: steps.ver.outputs.skip == 'false'
+      - name: Commit & push
+        if: steps.plan.outputs.action != 'skip'
         run: |
-          NEW="${{ steps.ver.outputs.new }}"
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
           git add -A
-          git diff --cached --quiet && { echo "无实际文件变化"; exit 0; }
-          git commit -m "chore: update gnome-shell upstream to ${NEW}"
+          if git diff --cached --quiet; then
+            echo "无实际变化"
+            exit 0
+          fi
+
+          ACTION="${{ steps.plan.outputs.action }}"
+          if [ "$ACTION" = "init" ]; then
+            MSG="chore: init upstream baseline (${{ steps.plan.outputs.current }})"
+          else
+            MSG="chore: update gnome-shell ${{ steps.plan.outputs.current }} → ${{ steps.plan.outputs.new }}"
+          fi
+
+          git commit -m "$MSG"
           git push
