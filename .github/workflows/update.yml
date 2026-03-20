@@ -1,0 +1,184 @@
+name: Update gnome-shell upstream
+
+on:
+  workflow_dispatch:
+    inputs:
+      new_version:
+        description: '目标版本号 (留空=自动检测)'
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    container:
+      image: debian:trixie
+
+    steps:
+      - name: Install tools
+        run: |
+          apt-get update -qq
+          apt-get install -y --no-install-recommends \
+            ca-certificates wget git devscripts dpkg-dev \
+            grep sed coreutils diffutils
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Detect versions
+        id: ver
+        run: |
+          # 从 build-deb.sh 解析当前版本
+          CURRENT=$(grep -oP 'gnome-shell_\K[^"'\'']+(?=\.dsc)' \
+            gnome-shell/scripts/build-deb.sh | head -1)
+          echo "current=$CURRENT" >> "$GITHUB_OUTPUT"
+          echo "当前版本: $CURRENT"
+
+          # 目标版本: 手动输入 > apt 自动检测
+          if [ -n "${{ inputs.new_version }}" ]; then
+            NEW="${{ inputs.new_version }}"
+          else
+            apt-get update -qq
+            NEW=$(apt-cache policy gnome-shell \
+              | grep -oP 'Candidate:\s*\K\S+')
+          fi
+          echo "new=$NEW" >> "$GITHUB_OUTPUT"
+          echo "目标版本: $NEW"
+
+          if [ "$CURRENT" = "$NEW" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "✓ 已是最新版本，无需更新"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Download old upstream source (BASE)
+        if: steps.ver.outputs.skip == 'false'
+        run: |
+          VER="${{ steps.ver.outputs.current }}"
+          POOL="https://deb.debian.org/debian/pool/main/g/gnome-shell"
+          mkdir -p /tmp/old && cd /tmp/old
+          dget -u "$POOL/gnome-shell_${VER}.dsc"
+          echo "OLD_SRC=$(find /tmp/old -maxdepth 1 -type d -name 'gnome-shell-*' | head -1)" >> "$GITHUB_ENV"
+
+      - name: Download new upstream source (THEIRS)
+        if: steps.ver.outputs.skip == 'false'
+        run: |
+          VER="${{ steps.ver.outputs.new }}"
+          POOL="https://deb.debian.org/debian/pool/main/g/gnome-shell"
+          mkdir -p /tmp/new && cd /tmp/new
+          dget -u "$POOL/gnome-shell_${VER}.dsc"
+          echo "NEW_SRC=$(find /tmp/new -maxdepth 1 -type d -name 'gnome-shell-*' | head -1)" >> "$GITHUB_ENV"
+
+      - name: Three-way merge overlays
+        if: steps.ver.outputs.skip == 'false'
+        run: |
+          OVERLAY_DIR="gnome-shell/overrides"
+          CURRENT="${{ steps.ver.outputs.current }}"
+          NEW="${{ steps.ver.outputs.new }}"
+
+          # overlay → 上游源码中的路径映射
+          # js/ui/*.js  → js/ui/*.js (同名)
+          # js/ui-root/*.js → js/ui/*.js (重定向)
+
+          UNCHANGED=0; MERGED=0; CONFLICT=0; SKIPPED=0
+
+          merge_file() {
+            local ov_rel="$1" src_rel="$2"
+            local our="$OVERLAY_DIR/$ov_rel"
+            local base="$OLD_SRC/$src_rel"
+            local theirs="$NEW_SRC/$src_rel"
+
+            # 三个文件必须都存在
+            for p in "$our" "$base" "$theirs"; do
+              [ -f "$p" ] || { echo "  ⊘ $ov_rel — 缺失，跳过"; ((SKIPPED++)); return; }
+            done
+
+            # 上游无变化 → 跳过
+            if diff -q "$base" "$theirs" >/dev/null 2>&1; then
+              echo "  ✓ $ov_rel — 上游无变化"
+              ((UNCHANGED++))
+              return
+            fi
+
+            echo "  ⚡ $ov_rel — 上游有变化，合并 ..."
+            if git merge-file -p \
+                 -L "OURS($ov_rel)" \
+                 -L "BASE(upstream $CURRENT)" \
+                 -L "THEIRS(upstream $NEW)" \
+                 "$our" "$base" "$theirs" > /tmp/merge_result 2>/dev/null
+            then
+              cp /tmp/merge_result "$our"
+              echo "    ✓ 自动合并成功"
+              ((MERGED++))
+            else
+              rc=$?
+              if [ "$rc" -lt 128 ]; then
+                cp /tmp/merge_result "$our"
+                n=$(grep -c '^<<<<<<<' /tmp/merge_result 2>/dev/null || echo 0)
+                echo "    ✗ $n 处冲突 — 需手动解决"
+                ((CONFLICT++))
+              else
+                echo "    ✗ merge 出错 (rc=$rc)，保留原文件"
+                ((SKIPPED++))
+              fi
+            fi
+          }
+
+          # js/ui/ 下的同名覆盖文件
+          for f in "$OVERLAY_DIR"/js/ui/*.js; do
+            [ -f "$f" ] || continue
+            b=$(basename "$f")
+            merge_file "js/ui/$b" "js/ui/$b"
+          done
+
+          # js/ui-root/ 下映射到 js/ui/ 的文件
+          for f in "$OVERLAY_DIR"/js/ui-root/*.js; do
+            [ -f "$f" ] || continue
+            b=$(basename "$f")
+            merge_file "js/ui-root/$b" "js/ui/$b"
+          done
+
+          echo ""
+          echo "═══════════════════════════════════════"
+          echo "  版本:       $CURRENT → $NEW"
+          echo "  上游无变化: $UNCHANGED"
+          echo "  自动合并:   $MERGED"
+          echo "  有冲突:     $CONFLICT"
+          echo "  跳过:       $SKIPPED"
+          echo "═══════════════════════════════════════"
+
+          if [ "$CONFLICT" -gt 0 ]; then
+            echo "::error::有 $CONFLICT 个文件存在合并冲突，CI 失败"
+            exit 1
+          fi
+
+          if [ "$MERGED" -eq 0 ]; then
+            echo "上游虽有新版本，但涉及的文件均无变化，仅更新 DSC URL"
+          fi
+
+      - name: Update build-deb.sh version
+        if: steps.ver.outputs.skip == 'false'
+        run: |
+          CURRENT="${{ steps.ver.outputs.current }}"
+          NEW="${{ steps.ver.outputs.new }}"
+          sed -i "s|gnome-shell_${CURRENT}\.dsc|gnome-shell_${NEW}.dsc|g" \
+            gnome-shell/scripts/build-deb.sh
+          echo "✓ build-deb.sh: $CURRENT → $NEW"
+
+      - name: Commit and push
+        if: steps.ver.outputs.skip == 'false'
+        run: |
+          NEW="${{ steps.ver.outputs.new }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --quiet && { echo "无实际文件变化"; exit 0; }
+          git commit -m "chore: update gnome-shell upstream to ${NEW}"
+          git push

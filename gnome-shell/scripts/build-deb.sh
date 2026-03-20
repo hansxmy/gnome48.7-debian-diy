@@ -2,8 +2,8 @@
 set -euo pipefail
 
 # 可通过环境变量覆盖
-# 示例：GNOME_SHELL_DSC_URL=https://deb.debian.org/debian/pool/main/g/gnome-shell/gnome-shell_48.7-0+deb13u1.dsc
-DSC_URL="${GNOME_SHELL_DSC_URL:-https://deb.debian.org/debian/pool/main/g/gnome-shell/gnome-shell_48.7-0+deb13u1.dsc}"
+# 示例：GNOME_SHELL_DSC_URL=https://deb.debian.org/debian/pool/main/g/gnome-shell/gnome-shell_48.7-0+deb13u2.dsc
+DSC_URL="${GNOME_SHELL_DSC_URL:-https://deb.debian.org/debian/pool/main/g/gnome-shell/gnome-shell_48.7-0+deb13u2.dsc}"
 LOCAL_SUFFIX="${LOCAL_SUFFIX:-+surfacego1}"
 DISTRO="${DISTRO:-trixie}"
 RUN_TESTS="${RUN_TESTS:-0}"
