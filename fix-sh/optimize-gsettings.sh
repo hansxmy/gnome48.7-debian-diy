@@ -50,21 +50,15 @@ apply() {
 }
 
 echo "=== GNOME Shell 动画 ==="
-# 确保动画处于开启状态（关掉会导致部分过渡生硬）
-# 不调整 slow-down-factor — Surface GO 默认 1.0 即可，不需要加速
 apply org.gnome.desktop.interface enable-animations true
 
 echo ""
 echo "=== 搜索提供程序 ==="
-# 禁用所有搜索提供程序 — Overview 搜索框已被移除
 apply org.gnome.desktop.search-providers disable-external true
 apply org.gnome.desktop.search-providers disabled "['org.gnome.Nautilus.desktop', 'org.gnome.Calculator.desktop', 'org.gnome.Characters.desktop', 'org.gnome.clocks.desktop', 'org.gnome.Contacts.desktop', 'org.gnome.Calendar.desktop', 'org.gnome.Terminal.desktop', 'org.gnome.Software.desktop', 'org.gnome.Weather.desktop']"
 
 echo ""
 echo "=== Tracker / LocalSearch 索引 ==="
-# 即使 tracker-miner-fs 被 mask，也确保 gsettings 层面关闭
-# 防止意外 unmask 后立即开始全盘扫描
-# Debian Trixie (GNOME 48) 将 Tracker3 重命名为 LocalSearch3
 apply org.freedesktop.Tracker3.Miner.Files crawling-interval -2
 apply org.freedesktop.Tracker3.Miner.Files enable-monitors false
 apply org.freedesktop.LocalSearch3.Miner.Files crawling-interval -2
@@ -72,15 +66,12 @@ apply org.freedesktop.LocalSearch3.Miner.Files enable-monitors false
 
 echo ""
 echo "=== GNOME Software 自动更新 ==="
-# 禁止后台下载更新（你只用 apt）
 apply org.gnome.software download-updates false
 apply org.gnome.software allow-updates false
 apply org.gnome.software first-run false
 
 echo ""
 echo "=== 收藏栏清理 ==="
-# Only set favorites if user hasn't customized them away from default.
-# Check if current favorites still contain Nautilus (GNOME default).
 _HAS_NAUTILUS=$(gsettings get org.gnome.shell favorite-apps 2>/dev/null | grep -c 'org.gnome.Nautilus' || true)
 if [ "${_HAS_NAUTILUS:-0}" -gt 0 ]; then
   apply org.gnome.shell favorite-apps "['org.gnome.TextEditor.desktop', 'org.gnome.Terminal.desktop']"
@@ -90,16 +81,12 @@ fi
 
 echo ""
 echo "=== 文件管理器性能 ==="
-# 关闭缩略图生成（SSD 上非必要，节省 CPU）
 apply org.gnome.desktop.thumbnailers disable-all true
-# 减少最近文件记录数量
 apply org.gnome.desktop.privacy recent-files-max-age 7
 apply org.gnome.desktop.privacy remember-recent-files true
 
 echo ""
 echo "=== 屏幕使用时间/隐私 ==="
-# 禁用 GNOME 的"使用与时间"（Screen Time）数据收集
-# 这不会移除设置面板，但会停止后台统计
 apply org.gnome.desktop.privacy remember-app-usage false
 
 echo ""

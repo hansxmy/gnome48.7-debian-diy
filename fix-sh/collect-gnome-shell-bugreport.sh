@@ -42,16 +42,12 @@ echo "[3/7] GNOME/Mutter 关键设置..."
 } > "$OUTDIR/gsettings.txt"
 
 echo "[4/7] 当前启动日志 (最近 5000 行)..."
-# Limit each journal dump to 5000 lines to avoid filling Surface GO's 64GB eMMC.
-# A multi-day session can produce 50-200MB of unbounded journal output.
 journalctl -b --no-pager -n 5000 > "$OUTDIR/journal-boot.log" || true
 journalctl -b _COMM=gnome-shell --no-pager -n 5000 > "$OUTDIR/journal-gnome-shell.log" || true
 journalctl -b -u gdm --no-pager -n 5000 > "$OUTDIR/journal-gdm.log" || true
 journalctl -b -p warning..alert --no-pager -n 5000 > "$OUTDIR/journal-warn.log" || true
 
 echo "[5/7] 组件分类日志..."
-# Extract component-specific lines from gnome-shell log for quick diagnosis.
-# Each grep is best-effort (|| true) — empty output means no related issues.
 GNOME_LOG="$OUTDIR/journal-gnome-shell.log"
 if [ -f "$GNOME_LOG" ]; then
   grep -iE 'clipboard|ClipboardIndicator|ClipboardSync|ClipboardRegistry' \
@@ -64,7 +60,6 @@ if [ -f "$GNOME_LOG" ]; then
     "$GNOME_LOG" > "$OUTDIR/component-appgrid.log" 2>/dev/null || true
   grep -iE 'overview|persistentDash|ControlsManager|overviewControls' \
     "$GNOME_LOG" > "$OUTDIR/component-overview.log" 2>/dev/null || true
-  # Remove zero-length component logs to keep archive clean
   find "$OUTDIR" -name 'component-*.log' -empty -delete 2>/dev/null || true
 fi
 

@@ -375,6 +375,33 @@ async function _initializeUI() {
         console.warn(`IconGrid getDropTarget patch failed: ${e}`);
     }
 
+    // Constrain app-folder dialog on Surface GO's small 1200×800 display.
+    // Without this, the folder popup fills the entire screen (including
+    // dock area), making it impossible to drag apps out of folders.
+    // Writes a tiny CSS file to ~/.cache and loads it as an additional
+    // stylesheet — !important overrides any inline style set by
+    // _updateFolderSize().
+    try {
+        const _monitor = layoutManager.primaryMonitor;
+        if (_monitor) {
+            const maxW = Math.round(_monitor.width * 0.62);
+            const maxH = Math.round(_monitor.height * 0.55);
+            const css =
+                `.app-folder-dialog { max-width: ${maxW}px !important; ` +
+                `max-height: ${maxH}px !important; }\n`;
+            const cssPath = GLib.build_filenamev([
+                GLib.get_user_cache_dir(),
+                'gnome-shell-surface-folder.css',
+            ]);
+            GLib.file_set_contents(cssPath, css);
+            St.ThemeContext.get_for_stage(global.stage)
+                .get_theme()
+                .load_stylesheet(Gio.File.new_for_path(cssPath));
+        }
+    } catch (e) {
+        console.warn(`App folder CSS constraint failed: ${e}`);
+    }
+
     new PointerA11yTimeout.PointerA11yTimeout();
 
     global.connect('locate-pointer', () => {

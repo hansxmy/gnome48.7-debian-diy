@@ -162,6 +162,9 @@ export const ClipboardIndicator = GObject.registerClass({
 
         // ── Clear history button ──
         this.clearMenuItem = new PopupMenu.PopupMenuItem('清空历史');
+        // Larger click target & bottom margin prevent Wayland popup
+        // edge-clipping misses on fractional-scaled displays (150%).
+        this.clearMenuItem.style = 'min-height: 36px; margin-bottom: 6px;';
         this.clearMenuItem.insert_child_at_index(
             new St.Icon({
                 icon_name: 'user-trash-symbolic',

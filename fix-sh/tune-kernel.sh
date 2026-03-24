@@ -52,8 +52,6 @@ fi
 
 echo "=== 1. VM 参数 ==="
 
-# swappiness=10: 8GB RAM 足够，仅在内存压力很大时才换出
-# 默认 60 太激进，Surface GO 更需要让热数据留在 RAM
 cat > /etc/sysctl.d/90-surfacego-performance.conf <<'EOF'
 # Surface GO performance tuning
 vm.swappiness = 10
@@ -69,45 +67,47 @@ echo "  dirty_ratio=15, dirty_background_ratio=5"
 echo ""
 echo "=== 2. zram (内存压缩交换，替代 swap 分区) ==="
 
-# 8GB RAM + 4GB zram ≈ 12GB 等效内存，不需要 SSD swap 分区
-# zram 延迟 ~微秒 vs SSD swap ~毫秒，快 1000 倍
-# 装系统时不建 swap 分区，省 6.2GB SSD 空间
-
-# 安装 zram-tools（如果没有）
-if ! dpkg -l zram-tools 2>/dev/null | grep -q '^ii'; then
-  echo "  安装 zram-tools ..."
-  apt-get install -y zram-tools
+# 先检测内核是否支持 zram（编译为模块或内建）
+ZRAM_AVAILABLE=0
+if [ -e /sys/block/zram0 ]; then
+  ZRAM_AVAILABLE=1
+elif modprobe -n -q zram 2>/dev/null; then
+  ZRAM_AVAILABLE=1
 fi
 
-# 配置 zram: 4GB (RAM 的 50%)，zstd 压缩
-cat > /etc/default/zramswap <<'EOF'
+if [ "$ZRAM_AVAILABLE" = "0" ]; then
+  echo "  [skip] 当前内核 $(uname -r) 未编译 zram 模块"
+  echo "  保留 swap 分区作为后备（8GB RAM 日常够用）"
+else
+  if ! dpkg -l zram-tools 2>/dev/null | grep -q '^ii'; then
+    echo "  安装 zram-tools ..."
+    apt-get install -y zram-tools
+  fi
+
+  cat > /etc/default/zramswap <<'EOF'
 # Surface GO zram config — no swap partition needed
 ALGO=zstd
 PERCENT=50
 PRIORITY=100
 EOF
 
-# 如果 zram 已经在运行，跳过重复初始化
-if swapon --show=NAME,TYPE 2>/dev/null | grep -q 'zram'; then
-  echo "  zram 已在运行，跳过初始化"
-elif systemctl list-unit-files | grep -q zramswap; then
-  systemctl enable zramswap
-  systemctl restart zramswap
-  echo "  zram 已配置: 4GB zstd, priority=100"
-elif systemctl list-unit-files | grep -q 'systemd-zram-setup'; then
-  systemctl enable --now systemd-zram-setup@zram0.service
-  echo "  systemd-zram 已启用: zram0"
-else
-  # 手动创建 + 持久化 systemd unit
-  modprobe zram num_devices=1
-  # Reset any stale zram device to ensure clean state
-  echo 1 > /sys/block/zram0/reset 2>/dev/null || true
-  echo zstd > /sys/block/zram0/comp_algorithm 2>/dev/null || echo lz4 > /sys/block/zram0/comp_algorithm 2>/dev/null || echo "  警告: zram 不支持 zstd/lz4，使用默认 lzo-rle 算法"
-  echo $((4 * 1024 * 1024 * 1024)) > /sys/block/zram0/disksize
-  mkswap /dev/zram0
-  swapon -p 100 /dev/zram0
-  # 创建 systemd service 确保重启后自动恢复 zram
-  cat > /etc/systemd/system/zram-manual.service <<'UNIT'
+  if swapon --show=NAME,TYPE 2>/dev/null | grep -q 'zram'; then
+    echo "  zram 已在运行，跳过初始化"
+  elif systemctl list-unit-files | grep -q zramswap; then
+    systemctl enable zramswap
+    systemctl restart zramswap
+    echo "  zram 已配置: 4GB zstd, priority=100"
+  elif systemctl list-unit-files | grep -q 'systemd-zram-setup'; then
+    systemctl enable --now systemd-zram-setup@zram0.service
+    echo "  systemd-zram 已启用: zram0"
+  else
+    modprobe zram num_devices=1
+    echo 1 > /sys/block/zram0/reset 2>/dev/null || true
+    echo zstd > /sys/block/zram0/comp_algorithm 2>/dev/null || echo lz4 > /sys/block/zram0/comp_algorithm 2>/dev/null || echo "  警告: zram 不支持 zstd/lz4，使用默认 lzo-rle 算法"
+    echo $((4 * 1024 * 1024 * 1024)) > /sys/block/zram0/disksize
+    mkswap /dev/zram0
+    swapon -p 100 /dev/zram0
+    cat > /etc/systemd/system/zram-manual.service <<'UNIT'
 [Unit]
 Description=Manual zram swap (Surface GO)
 After=local-fs.target
@@ -122,44 +122,38 @@ ExecStop=/sbin/swapoff /dev/zram0
 [Install]
 WantedBy=multi-user.target
 UNIT
-  systemctl daemon-reload
-  systemctl enable zram-manual.service
-  echo "  zram0 已手动创建: 4GB, priority=100 (systemd unit 已安装，重启后自动恢复)"
-fi
-
-# 如果系统存在 swap 分区，关掉它（保留 zram）
-if swapon --show | grep -q 'partition'; then
-  echo "  检测到 swap 分区，正在关闭..."
-
-  # Safety: check if swap usage is too high to safely disable
-  SWAP_TOTAL=$(free -m | awk '/^Swap:/ {print $2}')
-  SWAP_USED=$(free -m | awk '/^Swap:/ {print $3}')
-  MEM_FREE=$(free -m | awk '/^Mem:/ {print $7}')  # available
-  if [ "${SWAP_USED:-0}" -gt 0 ] && [ "${MEM_FREE:-999999}" -lt "${SWAP_USED:-0}" ]; then
-    echo "  ⚠ WARNING: ${SWAP_USED}MB swap in use but only ${MEM_FREE}MB RAM available"
-    echo "  Skipping swapoff to avoid OOM. Please close applications and retry."
-  else
-    # 仅关闭非 zram 的 swap 设备，保留 zram 运行
-    swapon --show=NAME,TYPE --noheadings | while read -r name type; do
-      if [ "$type" != "partition" ]; then continue; fi
-      swapoff "$name" && echo "  已关闭: $name" || echo "  关闭失败: $name"
-    done
-    # 注释掉 fstab 中的 swap 行防止重启恢复
-    cp /etc/fstab /etc/fstab.bak.$(date +%s)
-    sed -i '/^[^#].*\sswap\s/s/^/#/' /etc/fstab
-    echo "  swap 分区已关闭，fstab 已注释（备份: /etc/fstab.bak.*）"
+    systemctl daemon-reload
+    systemctl enable zram-manual.service
+    echo "  zram0 已手动创建: 4GB, priority=100 (systemd unit 已安装，重启后自动恢复)"
   fi
-fi
 
-echo "  8GB RAM + 4GB zram = 等效 12GB，无需 SSD swap"
+  # zram 可用时才关闭 swap 分区
+  if swapon --show | grep -q 'partition'; then
+    echo "  检测到 swap 分区，正在关闭..."
+
+    SWAP_TOTAL=$(free -m | awk '/^Swap:/ {print $2}')
+    SWAP_USED=$(free -m | awk '/^Swap:/ {print $3}')
+    MEM_FREE=$(free -m | awk '/^Mem:/ {print $7}')  # available
+    if [ "${SWAP_USED:-0}" -gt 0 ] && [ "${MEM_FREE:-999999}" -lt "${SWAP_USED:-0}" ]; then
+      echo "  ⚠ WARNING: ${SWAP_USED}MB swap in use but only ${MEM_FREE}MB RAM available"
+      echo "  Skipping swapoff to avoid OOM. Please close applications and retry."
+    else
+      swapon --show=NAME,TYPE --noheadings | while read -r name type; do
+        if [ "$type" != "partition" ]; then continue; fi
+        swapoff "$name" && echo "  已关闭: $name" || echo "  关闭失败: $name"
+      done
+      cp /etc/fstab /etc/fstab.bak.$(date +%s)
+      sed -i '/^[^#].*\sswap\s/s/^/#/' /etc/fstab
+      echo "  swap 分区已关闭，fstab 已注释（备份: /etc/fstab.bak.*）"
+    fi
+  fi
+
+  echo "  8GB RAM + 4GB zram = 等效 12GB，无需 SSD swap"
+fi
 
 echo ""
 echo "=== 3. i915 显卡参数 (性能优先) ==="
 
-# Surface GO 用 Intel HD Graphics 615 (Kaby Lake)
-# enable_fbc=1: 帧缓冲压缩 — 减少显存带宽，对性能有正面帮助
-# enable_psr=0: 面板自刷新 — 关闭，避免闪屏/延迟问题
-# enable_dc=1:  显示核心省电 — 保持默认，enable_dc=0 可能导致 GPU 挂起
 if lsmod 2>/dev/null | grep -q '^i915'; then
   cat > /etc/modprobe.d/i915-surfacego.conf <<'EOF'
 # Surface GO i915: performance over power saving
@@ -176,7 +170,6 @@ fi
 echo ""
 echo "=== 4. I/O 调度器 ==="
 
-# SSD 默认使用 mq-deadline 或 none，确认一下
 SCHED=$(cat /sys/block/mmcblk0/queue/scheduler 2>/dev/null || cat /sys/block/nvme0n1/queue/scheduler 2>/dev/null || cat /sys/block/sda/queue/scheduler 2>/dev/null || echo "unknown")
 echo "  当前 I/O 调度器: $SCHED"
 echo "  (SSD 推荐 mq-deadline 或 none，通常 Debian 默认已正确)"
@@ -184,10 +177,6 @@ echo "  (SSD 推荐 mq-deadline 或 none，通常 Debian 默认已正确)"
 echo ""
 echo "=== 5. 触屏休眠恢复修复 ==="
 
-# Surface GO 1 的 SileadTouch (MSSL1680:00) 在 sleep/resume 后
-# 偶尔失联。内核 surface_aggregator 或 i2c-hid 驱动在恢复时
-# 没有正确重新初始化设备。通过 systemd service 在 resume 后
-# unbind + rebind i2c-hid 驱动来强制重新探测触屏。
 TOUCH_I2C_DEVICE=""
 for dev in /sys/bus/i2c/drivers/i2c_hid_acpi/*/name; do
   if [ -f "$dev" ] && grep -qi 'silead\|MSSL\|1680' "$dev" 2>/dev/null; then
@@ -197,7 +186,6 @@ for dev in /sys/bus/i2c/drivers/i2c_hid_acpi/*/name; do
 done
 
 if [ -z "$TOUCH_I2C_DEVICE" ]; then
-  # Fallback: try to find any i2c-hid-acpi device (Surface GO touch)
   for dev in /sys/bus/i2c/drivers/i2c_hid_acpi/*/; do
     [ -d "$dev" ] && TOUCH_I2C_DEVICE=$(basename "$dev") && break
   done
