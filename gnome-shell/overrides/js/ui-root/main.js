@@ -375,31 +375,50 @@ async function _initializeUI() {
         console.warn(`IconGrid getDropTarget patch failed: ${e}`);
     }
 
-    // Constrain app-folder dialog on Surface GO's small 1200×800 display.
-    // Without this, the folder popup fills the entire screen (including
-    // dock area), making it impossible to drag apps out of folders.
-    // Writes a tiny CSS file to ~/.cache and loads it as an additional
-    // stylesheet — !important overrides any inline style set by
-    // _updateFolderSize().
+    // ── App-folder dialog size fix for Surface GO ──
+    // Upstream .app-folder-dialog is hardcoded at 720×720px (CSS).
+    // Surface GO at 150% scale = 1200×800 logical px, so the 720px
+    // dialog overflows the screen and covers the dock — making it
+    // impossible to drag apps out of folders.
+    //
+    // Root cause: _viewBox has x_expand/y_expand=true which makes it
+    // ignore the CSS width/height when the parent allocates more space.
+    // CSS-only fixes (load_stylesheet, max-width) do NOT work because
+    // St respects expand flags over CSS size hints.
+    //
+    // Fix: monkey-patch AppFolderDialog.prototype.popup to clamp
+    // _viewBox dimensions BEFORE the dialog opens.
     try {
-        const _monitor = layoutManager.primaryMonitor;
-        if (_monitor) {
-            const maxW = Math.round(_monitor.width * 0.62);
-            const maxH = Math.round(_monitor.height * 0.55);
-            const css =
-                `.app-folder-dialog { max-width: ${maxW}px !important; ` +
-                `max-height: ${maxH}px !important; }\n`;
-            const cssPath = GLib.build_filenamev([
-                GLib.get_user_cache_dir(),
-                'gnome-shell-surface-folder.css',
-            ]);
-            GLib.file_set_contents(cssPath, css);
-            St.ThemeContext.get_for_stage(global.stage)
-                .get_theme()
-                .load_stylesheet(Gio.File.new_for_path(cssPath));
-        }
+        const AppDisplay = (await import('./appDisplay.js'));
+        const _origPopup = AppDisplay.AppFolderDialog.prototype.popup;
+        AppDisplay.AppFolderDialog.prototype.popup = function () {
+            const monitor = Main.layoutManager.primaryMonitor;
+            if (monitor && this._viewBox) {
+                const maxW = Math.min(720, Math.round(monitor.width * 0.62));
+                const maxH = Math.min(720, Math.round(monitor.height * 0.55));
+                // Disable expand so the viewBox respects the explicit size
+                // instead of stretching to fill the full-screen parent.
+                this._viewBox.set({
+                    x_expand: false,
+                    y_expand: false,
+                });
+                // Inline style overrides the CSS class's 720×720 dimensions.
+                this._viewBox.style =
+                    `width: ${maxW}px; height: ${maxH}px;`;
+                // The container wrapping _viewBox defaults to FILL alignment
+                // which would force-stretch the child.  Switch to CENTER so
+                // the clamped size is respected.
+                if (this.child) {
+                    this.child.set({
+                        x_align: Clutter.ActorAlign.CENTER,
+                        y_align: Clutter.ActorAlign.CENTER,
+                    });
+                }
+            }
+            return _origPopup.call(this);
+        };
     } catch (e) {
-        console.warn(`App folder CSS constraint failed: ${e}`);
+        console.warn(`App folder dialog patch failed: ${e}`);
     }
 
     new PointerA11yTimeout.PointerA11yTimeout();
