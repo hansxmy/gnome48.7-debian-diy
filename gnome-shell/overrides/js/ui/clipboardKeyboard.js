@@ -45,8 +45,11 @@ export class ClipboardKeyboard {
     press(key) {
         if (!this.#device) return;
         try {
+            // Use monotonic clock directly — Clutter.get_current_event_time()
+            // returns 0 inside setTimeout callbacks (no current event),
+            // and timestamp 0 may be treated as stale by Wayland clients.
             this.#device.notify_keyval(
-                Clutter.get_current_event_time() * 1000,
+                GLib.get_monotonic_time(),
                 key, Clutter.KeyState.PRESSED);
         } catch (e) {
             console.error('ClipboardKeyboard.press:', e);
@@ -57,7 +60,7 @@ export class ClipboardKeyboard {
         if (!this.#device) return;
         try {
             this.#device.notify_keyval(
-                Clutter.get_current_event_time() * 1000,
+                GLib.get_monotonic_time(),
                 key, Clutter.KeyState.RELEASED);
         } catch (e) {
             console.error('ClipboardKeyboard.release:', e);

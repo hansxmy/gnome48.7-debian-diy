@@ -512,7 +512,10 @@ export const ClipboardIndicator = GObject.registerClass({
             // Deduplicate
             for (let item of this.clipItemsRadioGroup) {
                 if (item.entry.equals(entry)) {
-                    this._selectMenuItem(item, false);
+                    // autoSet=true: let GNOME Shell take clipboard ownership
+                    // immediately so that clicking this entry to paste later
+                    // does NOT require an async Wayland ownership transfer.
+                    this._selectMenuItem(item, true);
                     if (!isFromRemote)
                         this.sync?.send(entry.mimetype(), entry.rawBytes());
                     return;
@@ -520,7 +523,9 @@ export const ClipboardIndicator = GObject.registerClass({
             }
 
             // New local clipboard entry
-            this._addEntry(entry, true, false);
+            // autoSetClip=true: same reason — take clipboard ownership now
+            // so the first (default-selected) entry can paste immediately.
+            this._addEntry(entry, true, true);
             this._removeOldestEntries();
             this._updateCache();
 
@@ -675,11 +680,14 @@ export const ClipboardIndicator = GObject.registerClass({
             clearTimeout(this._pasteResetTimeout);
         if (this._pasteKeypressTimeout)
             clearTimeout(this._pasteKeypressTimeout);
+        // Wayland grab is released synchronously on menu.close();
+        // 100 ms (~6 frames @ 60 Hz) is enough for the compositor
+        // to transfer focus back to the previous window.
         this._pasteKeypressTimeout = setTimeout(() => {
             this.#pasteInProgress = false;
             if (this._destroyed) return;
             this.#simulatePaste();
-        }, 250);
+        }, 100);
     }
 
     /** Quick-paste via 'v' key without changing selection. */
@@ -697,6 +705,7 @@ export const ClipboardIndicator = GObject.registerClass({
             clearTimeout(this._pasteResetTimeout);
         if (this._pasteKeypressTimeout)
             clearTimeout(this._pasteKeypressTimeout);
+        // 100 ms for focus transfer, 200 ms for app to process Ctrl+V
         this._pasteKeypressTimeout = setTimeout(() => {
             if (this._destroyed) return;
             this.#simulatePaste();
@@ -710,8 +719,8 @@ export const ClipboardIndicator = GObject.registerClass({
                         selected.entry.mimetype(),
                         selected.entry.asBytes());
                 }
-            }, 500);
-        }, 250);
+            }, 200);
+        }, 100);
     }
 
     // ──────────────────────── Cleanup ────────────────────────
