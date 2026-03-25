@@ -341,6 +341,15 @@ export class Overview extends Signals.EventEmitter {
             this._trackWindowForPersistentDash(metaWindow);
         }
 
+        // Force setMaxSize to re-trigger _queueRedisplay even when the
+        // monitor dimensions haven't changed.  After suspend/resume the
+        // persistent dash is re-parented into a fresh container and its
+        // theme-node / icon-size cache is stale — without this reset
+        // setMaxSize short-circuits (same values) and _adjustIconSize
+        // never runs, leaving the dock at the default 64px icon size.
+        this._persistentDash._maxWidth = -1;
+        this._persistentDash._maxHeight = -1;
+
         this._updatePersistentDashLayout();
         this._updatePersistentDashVisibility(false);
     }
