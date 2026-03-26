@@ -392,7 +392,7 @@ async function _initializeUI() {
         const AppDisplay = (await import('./appDisplay.js'));
         const _origPopup = AppDisplay.AppFolderDialog.prototype.popup;
         AppDisplay.AppFolderDialog.prototype.popup = function () {
-            const monitor = Main.layoutManager.primaryMonitor;
+            const monitor = layoutManager.primaryMonitor;
             if (monitor && this._viewBox) {
                 const maxW = Math.min(720, Math.round(monitor.width * 0.62));
                 const maxH = Math.min(720, Math.round(monitor.height * 0.55));

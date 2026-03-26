@@ -154,57 +154,17 @@ fi
 echo ""
 echo "=== 3. i915 显卡参数 (性能优先) ==="
 
-# /sys/module/i915 exists for both built-in (=y) and loadable (=m) drivers.
-if [ -d /sys/module/i915 ]; then
-
-  # Detect built-in vs loadable module
-  if lsmod 2>/dev/null | grep -q '^i915'; then
-    # ── Loadable module: modprobe.d works ──
-    cat > /etc/modprobe.d/i915-surfacego.conf <<'EOF'
+if lsmod 2>/dev/null | grep -q '^i915'; then
+  cat > /etc/modprobe.d/i915-surfacego.conf <<'EOF'
 # Surface GO i915: performance over power saving
 options i915 enable_fbc=1 enable_psr=0
 EOF
-    echo "  enable_fbc=1, enable_psr=0"
-    echo "  → modprobe.d 已配置，重启后生效"
-  else
-    # ── Built-in driver: modprobe.d is IGNORED by the kernel. ──
-    # Parameters must be passed via kernel command line (GRUB).
-    GRUB_FILE="/etc/default/grub"
-    if [ ! -f "$GRUB_FILE" ]; then
-      echo "  [skip] $GRUB_FILE 不存在，无法配置内核命令行"
-    else
-      NEED_UPDATE=0
-      for kparam in i915.enable_fbc=1 i915.enable_psr=0; do
-        if ! grep -q "$kparam" "$GRUB_FILE"; then
-          NEED_UPDATE=1
-          break
-        fi
-      done
-
-      if [ "$NEED_UPDATE" = "1" ]; then
-        cp "$GRUB_FILE" "${GRUB_FILE}.bak.$(date +%s)"
-
-        # Remove any old i915 params to avoid duplicates, then append new ones
-        CLEANED=$(grep '^GRUB_CMDLINE_LINUX_DEFAULT=' "$GRUB_FILE" | head -1 | \
-          sed 's/i915\.enable_fbc=[^ "]*//g; s/i915\.enable_psr=[^ "]*//g; s/  */ /g; s/ "/"/g')
-        # Strip trailing quote, append params, re-add quote
-        NEW_LINE=$(echo "$CLEANED" | sed 's/"$/ i915.enable_fbc=1 i915.enable_psr=0"/' | sed 's/  */ /g')
-
-        sed -i "s|^GRUB_CMDLINE_LINUX_DEFAULT=.*|${NEW_LINE}|" "$GRUB_FILE"
-        update-grub 2>/dev/null
-        echo "  i915 为内建驱动，参数已写入 GRUB 内核命令行:"
-        echo "    i915.enable_fbc=1 (帧缓冲压缩)"
-        echo "    i915.enable_psr=0 (关闭面板自刷新, 避免闪屏)"
-        echo "  → 重启后生效"
-      else
-        echo "  i915 内核命令行参数已存在，无需修改"
-      fi
-    fi
-  fi
-
+  echo "  enable_fbc=1 (帧缓冲压缩, 正面性能)"
+  echo "  enable_psr=0 (关闭面板自刷新, 避免闪屏)"
   echo "  enable_dc   (保持默认, 不禁用以避免GPU挂起)"
+  echo "  → 需要重启生效"
 else
-  echo "  [skip] i915 驱动未检测到（非 Intel GPU）"
+  echo "  [skip] i915 模块未加载（非 Intel GPU 或未检测到）"
 fi
 
 echo ""
