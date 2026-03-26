@@ -385,10 +385,8 @@ async function _initializeUI() {
         // Surface GO at 150% scale = 1200×800 logical px → overflow.
         //
         // We ONLY touch the _viewBox; the outer this.child (St.Bin
-        // container) MUST keep its upstream FILL alignment so that:
-        //   • _withinDialog() extents match the full screen — preserving
-        //     drag-and-drop and the popdown-on-click behaviour.
-        //   • _zoomAndFadeIn/Out() animation calculations stay correct.
+        // container) keeps its upstream FILL alignment so that
+        // _zoomAndFadeIn/Out() animation calculations stay correct.
         //
         // The _viewBox already has x_align:CENTER / y_align:CENTER from
         // upstream, so with expand off + explicit size it centres itself.
@@ -408,7 +406,34 @@ async function _initializeUI() {
             return _origPopup.call(this);
         };
 
-        // ── 2. Auto-delete empty-because-of-favourites folders ──
+        // ── 2. Fix _withinDialog() for drag-and-drop ──
+        //
+        // Upstream bug: _withinDialog() checks this.child extents,
+        // but this.child has FILL alignment → fills the entire monitor.
+        // Result: _withinDialog() ALWAYS returns true, so
+        // handleDragOver() never triggers the popdown-on-drag-outside
+        // flow (_setupPopdownTimeout / _setupDragMonitor).
+        //
+        // Fix: check the _viewBox extents instead.  _viewBox is the
+        // visible dialog box (720×720 or our clamped size), so
+        // coordinates outside it correctly report "outside dialog".
+        //
+        // Both handleDragOver(x,y) and the DragMonitor callback
+        // supply stage-coordinate values (the dialog fills the
+        // monitor at origin 0,0 so local == stage coords), and
+        // get_transformed_extents() also returns stage coords.
+        AppDisplay.AppFolderDialog.prototype._withinDialog = function (x, y) {
+            const box = this._viewBox;
+            if (!box)
+                return true; // safety: fall back to "inside"
+            const rect = box.get_transformed_extents();
+            return x >= rect.get_x() &&
+                   x <= rect.get_x() + rect.get_width() &&
+                   y >= rect.get_y() &&
+                   y <= rect.get_y() + rect.get_height();
+        };
+
+        // ── 3. Auto-delete empty-because-of-favourites folders ──
         //
         // Problem: pinning the last app from a folder to the dock
         // (favourites) does NOT trigger GSettings 'changed' on the
@@ -444,7 +469,7 @@ async function _initializeUI() {
 
             // Step 2: detect & delete folders emptied by favourites
             this._folderIcons.forEach(icon => {
-                if (icon.view.deletingFolder)
+                if (icon.view._deletingFolder)
                     return;
                 // Only act if the view is now empty
                 if (icon.view.getAllItems().length > 0)
