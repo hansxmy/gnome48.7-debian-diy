@@ -375,50 +375,113 @@ async function _initializeUI() {
         console.warn(`IconGrid getDropTarget patch failed: ${e}`);
     }
 
-    // ── App-folder dialog size fix for Surface GO ──
-    // Upstream .app-folder-dialog is hardcoded at 720×720px (CSS).
-    // Surface GO at 150% scale = 1200×800 logical px, so the 720px
-    // dialog overflows the screen and covers the dock — making it
-    // impossible to drag apps out of folders.
-    //
-    // Root cause: _viewBox has x_expand/y_expand=true which makes it
-    // ignore the CSS width/height when the parent allocates more space.
-    // CSS-only fixes (load_stylesheet, max-width) do NOT work because
-    // St respects expand flags over CSS size hints.
-    //
-    // Fix: monkey-patch AppFolderDialog.prototype.popup to clamp
-    // _viewBox dimensions BEFORE the dialog opens.
+    // ── App-folder patches for Surface GO ──
     try {
         const AppDisplay = (await import('./appDisplay.js'));
+        const {getAppFavorites} = (await import('./appFavorites.js'));
+
+        // ── 1. Dialog size fix ──
+        // Upstream .app-folder-dialog is hardcoded at 720×720px (CSS).
+        // Surface GO at 150% scale = 1200×800 logical px → overflow.
+        //
+        // We ONLY touch the _viewBox; the outer this.child (St.Bin
+        // container) MUST keep its upstream FILL alignment so that:
+        //   • _withinDialog() extents match the full screen — preserving
+        //     drag-and-drop and the popdown-on-click behaviour.
+        //   • _zoomAndFadeIn/Out() animation calculations stay correct.
+        //
+        // The _viewBox already has x_align:CENTER / y_align:CENTER from
+        // upstream, so with expand off + explicit size it centres itself.
         const _origPopup = AppDisplay.AppFolderDialog.prototype.popup;
         AppDisplay.AppFolderDialog.prototype.popup = function () {
             const monitor = layoutManager.primaryMonitor;
             if (monitor && this._viewBox) {
                 const maxW = Math.min(720, Math.round(monitor.width * 0.62));
                 const maxH = Math.min(720, Math.round(monitor.height * 0.55));
-                // Disable expand so the viewBox respects the explicit size
-                // instead of stretching to fill the full-screen parent.
                 this._viewBox.set({
                     x_expand: false,
                     y_expand: false,
                 });
-                // Inline style overrides the CSS class's 720×720 dimensions.
                 this._viewBox.style =
                     `width: ${maxW}px; height: ${maxH}px;`;
-                // The container wrapping _viewBox defaults to FILL alignment
-                // which would force-stretch the child.  Switch to CENTER so
-                // the clamped size is respected.
-                if (this.child) {
-                    this.child.set({
-                        x_align: Clutter.ActorAlign.CENTER,
-                        y_align: Clutter.ActorAlign.CENTER,
-                    });
-                }
             }
             return _origPopup.call(this);
         };
+
+        // ── 2. Auto-delete empty-because-of-favourites folders ──
+        //
+        // Problem: pinning the last app from a folder to the dock
+        // (favourites) does NOT trigger GSettings 'changed' on the
+        // folder schema, so FolderIcon._sync() never fires, visible
+        // stays true, and the folder persists as an empty ghost.
+        // Un-pinning later re-creates the folder because the schema
+        // was never cleaned up.
+        //
+        // Fix: override AppDisplay._redisplay().  After refreshing each
+        // folder's view (which filters out favourites), check whether the
+        // folder is now empty BECAUSE all its GSettings apps are
+        // favourites.  If so, delete the folder schema from GSettings
+        // BEFORE the base _redisplay() → _loadApps() reads it.
+        //
+        // IMPORTANT constraints:
+        //   • Do NOT call icon._sync() — it emits 'apps-changed' which
+        //     re-enters _redisplay() → infinite recursion.
+        //   • Do NOT set icon.visible directly — _loadApps() would then
+        //     destroy the reused icon, and BaseAppView._redisplay() would
+        //     try to destroy it again (double-destroy).
+        //   • Deleting the GSettings schema before _loadApps() runs is
+        //     safe: _loadApps() simply won't iterate the removed folder
+        //     ID, and BaseAppView._redisplay() handles the orphaned icon
+        //     via its normal removedApps → _removeItem + destroy path.
+        const _baseRedisplay = Object.getPrototypeOf(
+            AppDisplay.AppDisplay.prototype)._redisplay;
+
+        AppDisplay.AppDisplay.prototype._redisplay = function () {
+            // Step 1: refresh each folder's view (same as upstream)
+            this._folderIcons.forEach(icon => {
+                icon.view._redisplay();
+            });
+
+            // Step 2: detect & delete folders emptied by favourites
+            this._folderIcons.forEach(icon => {
+                if (icon.view.deletingFolder)
+                    return;
+                // Only act if the view is now empty
+                if (icon.view.getAllItems().length > 0)
+                    return;
+                const folderApps = icon._folder.get_strv('apps');
+                if (folderApps.length === 0)
+                    return; // schema already cleaned
+                const fav = getAppFavorites();
+                if (!folderApps.every(id => fav.isFavorite(id)))
+                    return; // non-favourite apps remain
+
+                // All apps are favourites → nuke the folder schema.
+                // Same logic as upstream FolderView.removeApp() when
+                // the last app is removed.
+                icon.view._deletingFolder = true;
+                try {
+                    for (const key of icon._folder.settings_schema.list_keys())
+                        icon._folder.reset(key);
+                    const settings = new Gio.Settings({
+                        schema_id: 'org.gnome.desktop.app-folders',
+                    });
+                    const folders = settings.get_strv('folder-children');
+                    const idx = folders.indexOf(icon._id);
+                    if (idx >= 0) {
+                        folders.splice(idx, 1);
+                        settings.set_strv('folder-children', folders);
+                    }
+                } finally {
+                    icon.view._deletingFolder = false;
+                }
+            });
+
+            // Step 3: run BaseAppView._redisplay() → _loadApps() rebuilds
+            _baseRedisplay.call(this);
+        };
     } catch (e) {
-        console.warn(`App folder dialog patch failed: ${e}`);
+        console.warn(`App folder patches failed: ${e}`);
     }
 
     new PointerA11yTimeout.PointerA11yTimeout();

@@ -512,10 +512,16 @@ export const ClipboardIndicator = GObject.registerClass({
             // Deduplicate
             for (let item of this.clipItemsRadioGroup) {
                 if (item.entry.equals(entry)) {
-                    // autoSet=true: let GNOME Shell take clipboard ownership
-                    // immediately so that clicking this entry to paste later
-                    // does NOT require an async Wayland ownership transfer.
-                    this._selectMenuItem(item, true);
+                    // autoSet=false: do NOT take clipboard ownership here.
+                    // The original app still owns the clipboard with its
+                    // full set of mimetypes (e.g. x-special/gnome-copied-files
+                    // for file copy, text/uri-list, etc.).  Calling
+                    // set_content() here would replace the rich content with
+                    // just our single stored mimetype, breaking file paste
+                    // and other multi-format clipboard operations.
+                    // Ownership is taken later in #pasteSelectedItem() right
+                    // before simulating Ctrl+V.
+                    this._selectMenuItem(item, false);
                     if (!isFromRemote)
                         this.sync?.send(entry.mimetype(), entry.rawBytes());
                     return;
@@ -523,9 +529,10 @@ export const ClipboardIndicator = GObject.registerClass({
             }
 
             // New local clipboard entry
-            // autoSetClip=true: same reason — take clipboard ownership now
-            // so the first (default-selected) entry can paste immediately.
-            this._addEntry(entry, true, true);
+            // autoSetClip=false: same reason — preserve the original app's
+            // clipboard ownership so all mimetypes remain available for
+            // direct Ctrl+V paste.  Our indicator only records the entry.
+            this._addEntry(entry, true, false);
             this._removeOldestEntries();
             this._updateCache();
 
