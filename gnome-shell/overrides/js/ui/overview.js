@@ -352,6 +352,30 @@ export class Overview extends Signals.EventEmitter {
 
         this._updatePersistentDashLayout();
         this._updatePersistentDashVisibility(false);
+
+        // ── Fix DnD in app grid ──
+        // persistentDashContainer fills the entire monitor via
+        // MonitorConstraint.  dnd.js uses PickMode.ALL, which picks
+        // this container instead of the app-grid icons underneath,
+        // blocking folder creation / icon reordering.
+        //
+        // During active drag operations we hide the container from
+        // the Clutter pick system (it stays visually painted) so the
+        // pick reaches the app-grid icons.  Restored on drag-end.
+        this.connectObject(
+            'item-drag-begin', () => {
+                if (this._persistentDashContainer)
+                    Shell.util_set_hidden_from_pick(this._persistentDashContainer, true);
+            },
+            'item-drag-end', () => {
+                if (this._persistentDashContainer)
+                    Shell.util_set_hidden_from_pick(this._persistentDashContainer, false);
+            },
+            'item-drag-cancelled', () => {
+                if (this._persistentDashContainer)
+                    Shell.util_set_hidden_from_pick(this._persistentDashContainer, false);
+            },
+            this._persistentDashContainer);
     }
 
     _trackWindowForPersistentDash(metaWindow) {
@@ -582,14 +606,7 @@ export class Overview extends Signals.EventEmitter {
             return;
 
         if (this._visible || this._animationInProgress) {
-            // Overview is showing → the Dash has been reparented into
-            // ControlsManager, but the (now empty) persistentDashContainer
-            // still fills the entire monitor via MonitorConstraint.
-            // With PickMode.ALL, Clutter picks this container instead of
-            // the app-grid icons underneath, blocking ALL drag-and-drop
-            // (folder creation, icon reordering, etc.).
-            // Hide the container while the overview is visible.
-            this._hidePersistentDash(false);
+            this._showPersistentDash(false);
             return;
         }
 
