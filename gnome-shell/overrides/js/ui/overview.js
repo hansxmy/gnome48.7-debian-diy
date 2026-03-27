@@ -582,7 +582,14 @@ export class Overview extends Signals.EventEmitter {
             return;
 
         if (this._visible || this._animationInProgress) {
-            this._showPersistentDash(false);
+            // Overview is showing → the Dash has been reparented into
+            // ControlsManager, but the (now empty) persistentDashContainer
+            // still fills the entire monitor via MonitorConstraint.
+            // With PickMode.ALL, Clutter picks this container instead of
+            // the app-grid icons underneath, blocking ALL drag-and-drop
+            // (folder creation, icon reordering, etc.).
+            // Hide the container while the overview is visible.
+            this._hidePersistentDash(false);
             return;
         }
 
