@@ -505,6 +505,108 @@ async function _initializeUI() {
             // Step 3: run BaseAppView._redisplay() → _loadApps() rebuilds
             _baseRedisplay.call(this);
         };
+
+        // ── 4. DnD folder-creation diagnostic trace ──
+        // Traces the drag-over → drop → folder-creation pipeline so we
+        // can see exactly where the flow stops when dragging one AppIcon
+        // onto another in the main app grid.
+        //
+        const DND = (await import('./dnd.js'));
+
+        // Helper: replicate module-private _getViewFromIcon.
+        // Use duck-typing (_grid + _scrollView) since BaseAppView
+        // is not exported and instanceof across GObject can be fragile.
+        function _traceGetView(icon) {
+            for (let p = icon.get_parent(); p; p = p.get_parent()) {
+                if (p._grid !== undefined && p._scrollView !== undefined)
+                    return p;
+            }
+            return null;
+        }
+
+        const _origHandleDragOver =
+            AppDisplay.AppViewItem.prototype.handleDragOver;
+        AppDisplay.AppViewItem.prototype.handleDragOver =
+            function (source, actor, x) {
+                const result = _origHandleDragOver.call(this, source, actor, x);
+                // Only trace AppIcon ↔ AppIcon interactions (not folders, etc.)
+                if (this._id && source?._id &&
+                    this.constructor === AppDisplay.AppIcon &&
+                    source.constructor === AppDisplay.AppIcon) {
+                    const ca = this._canAccept(source);
+                    const wl = this._withinLeeways(x);
+                    const view = _traceGetView(source);
+                    console.log(
+                        `[DnD-trace] handleDragOver: ` +
+                        `src=${source._id} tgt=${this._id} ` +
+                        `x=${Math.round(x)} w=${this.width} ` +
+                        `canAccept=${ca} withinLeeways=${wl} ` +
+                        `srcView=${view?.constructor?.name ?? 'null'} ` +
+                        `result=${result}`);
+                }
+                return result;
+            };
+
+        const _origAcceptDrop =
+            AppDisplay.AppIcon.prototype.acceptDrop;
+        AppDisplay.AppIcon.prototype.acceptDrop =
+            function (source, actor, x) {
+                const view = _traceGetView(this);
+                console.log(
+                    `[DnD-trace] acceptDrop CALLED: ` +
+                    `src=${source?._id ?? '?'} tgt=${this._id} ` +
+                    `x=${Math.round(x)} w=${this.width} ` +
+                    `tgtView=${view?.constructor?.name ?? 'null'}`);
+                const result = _origAcceptDrop.call(this, source, actor, x);
+                console.log(
+                    `[DnD-trace] acceptDrop RESULT: ${result}`);
+                return result;
+            };
+
+        // Global drag monitor: logs the picked target actor on drop.
+        // This tells us what Clutter's pick actually finds, and the
+        // full acceptDrop parent-chain walk that dnd.js will follow.
+        DND.addDragMonitor({
+            dragDrop(dropEvent) {
+                const src = dropEvent.dropActor;
+                const tgt = dropEvent.targetActor;
+                console.log(
+                    `[DnD-trace] DROP pick: ` +
+                    `target=${tgt?.constructor?.name ?? '?'}` +
+                    `(name=${tgt?.name ?? ''}) ` +
+                    `delegate=${tgt?._delegate?.constructor?.name ?? 'none'}` +
+                    `(id=${tgt?._delegate?._id ?? ''})`);
+                // Walk parent chain to show what acceptDrop delegates exist
+                let t = tgt;
+                let depth = 0;
+                while (t && depth < 15) {
+                    if (t._delegate?.acceptDrop) {
+                        console.log(
+                            `[DnD-trace]   chain[${depth}]: ` +
+                            `${t.constructor?.name ?? '?'}` +
+                            `(name=${t.name ?? ''}) → ` +
+                            `${t._delegate?.constructor?.name ?? '?'}` +
+                            `(id=${t._delegate?._id ?? ''})`);
+                    }
+                    t = t.get_parent();
+                    depth++;
+                }
+                return DND.DragDropResult.CONTINUE;
+            },
+        });
+
+        // ── 5. Fix folder-grid icon alignment ──
+        //
+        // Upstream FolderGrid uses page_halign: CENTER, which causes
+        // icons in partially-filled rows to appear centered instead of
+        // left-aligned.  Override _createGrid to set START alignment.
+        const _origCreateGrid =
+            AppDisplay.FolderView.prototype._createGrid;
+        AppDisplay.FolderView.prototype._createGrid = function () {
+            const grid = _origCreateGrid.call(this);
+            grid.layout_manager.page_halign = Clutter.ActorAlign.START;
+            return grid;
+        };
     } catch (e) {
         console.warn(`App folder patches failed: ${e}`);
     }
